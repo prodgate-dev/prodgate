@@ -24,7 +24,7 @@ const program = new Command()
 program
   .name('prodgate')
   .description('Access control regression detection for Express APIs')
-  .version('0.1.0')
+  .version(require('../package.json').version)
 
 program
   .command('diff <before> <after>')
