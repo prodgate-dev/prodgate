@@ -1,64 +1,3 @@
-# Prodgate
-
-Access control regression detection for Express APIs.
-
-Prodgate diffs the access control model of your Express backend across two versions of a codebase and produces a deterministic pass/fail verdict. It catches authentication and authorization regressions before they ship — specifically the kind introduced silently by AI-generated code changes.
-
-## Installation
-
-```bash
-npm install -g prodgate
-```
-
-## Usage
-
-```bash
-prodgate diff <before> <after>
-```
-
-Where `<before>` and `<after>` are paths to two versions of the same repository — typically the base branch and the PR branch.
-
-### Example output
-
-```
-Prodgate Access Control Report
-──────────────────────────────────────────────────
-Routes scanned: 30
-
-[CRITICAL] POST /impersonate/:userId lost auth middleware: requireSuperuser(...)
-           Before: requireSuperuser(...)
-           After:  (none)
-
-──────────────────────────────────────────────────
-Summary: 1 critical
-Verdict: FAIL
-```
-
-## What Prodgate detects
-
-**CRITICAL — fails CI:**
-- Route lost authentication or authorization middleware
-- New unprotected POST, PUT, DELETE, or PATCH route
-- Auth middleware order changed (runs after handler instead of before)
-
-**WARNING — informational by default, fails CI with `--strict`:**
-- New unprotected GET route
-- Inconsistent protection across sibling routes on the same path
-
-## Flags
-
-| Flag | Description |
-|------|-------------|
-| `--json` | Output raw JSON |
-| `--github` | Output GitHub-flavored markdown for PR comments |
-| `--output <file>` | Write output to a file |
-| `--strict` | Fail CI on warnings as well as criticals |
-
-## CI Integration
-
-Add this to your repository at `.github/workflows/prodgate.yml`:
-
-```yaml
 name: Prodgate Access Control Check
 
 on:
@@ -99,17 +38,26 @@ jobs:
         with:
           script: |
             const fs = require('fs')
-            if (!fs.existsSync('prodgate-result.json')) return
+
+            if (!fs.existsSync('prodgate-result.json')) {
+              console.log('No prodgate result found, skipping comment')
+              return
+            }
+
             const result = JSON.parse(fs.readFileSync('prodgate-result.json', 'utf8'))
             const verdict = result.verdict === 'pass' ? 'PASS' : 'FAIL'
+
             let body = `## Prodgate Access Control Check: ${verdict}\n\n`
             body += `**${result.stats.routesScanned} routes scanned**\n\n`
+
             const criticals = result.entries.filter(e => e.severity === 'CRITICAL')
             const warnings = result.entries.filter(e => e.severity === 'WARNING')
             const infos = result.entries.filter(e => e.severity === 'INFO')
+
             if (criticals.length === 0 && warnings.length === 0 && infos.length === 0) {
               body += `No access control issues detected.\n`
             }
+
             if (criticals.length > 0) {
               body += `### Critical Issues\n\n`
               for (const entry of criticals) {
@@ -122,18 +70,22 @@ jobs:
                 body += `\n`
               }
             }
+
             if (warnings.length > 0) {
               body += `### Warnings\n\n`
               for (const entry of warnings) {
                 body += `- \`${entry.route.method.toUpperCase()} ${entry.route.path}\` — ${entry.message}\n`
               }
+              body += `\n`
             }
+
             if (infos.length > 0) {
               body += `### Info\n\n`
               for (const entry of infos) {
                 body += `- ${entry.message}\n`
               }
             }
+
             github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,
@@ -152,20 +104,3 @@ jobs:
             }
             console.log('Prodgate check passed.');
           "
-```
-
-## Zero config
-
-Prodgate auto-detects Express route files by scanning your repository. No configuration required.
-
-If auto-detection doesn't work for your project structure, create a `prodgate.config.json` at the repo root:
-
-```json
-{
-  "routesDir": "src/routes"
-}
-```
-
-## What Prodgate does not do
-
-Prodgate analyzes middleware names and structure — it does not execute your code or make network requests. It works entirely on static analysis of your source files.
