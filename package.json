@@ -2,27 +2,28 @@
   "name": "prodgate",
   "version": "0.1.2",
   "description": "Access control regression detection for Express APIs",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "main": "dist/cli.js",
   "bin": {
-    "prodgate": "dist/cli.js"
+    "prodgate": "./dist/cli.js"
   },
-  "files": [
-    "dist/"
-  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/prodgate-dev/prodgate.git"
+  },
+  "homepage": "https://github.com/prodgate-dev/prodgate",
+  "bugs": {
+    "url": "https://github.com/prodgate-dev/prodgate/issues"
+  },
+  "files": ["dist/"],
   "scripts": {
     "build": "tsc",
     "prepublishOnly": "npm run build",
     "dev": "ts-node src/cli.ts",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "keywords": [
-    "security",
-    "express",
-    "access-control",
-    "ci"
-  ],
-  "author": "",
+  "keywords": ["security", "express", "access-control", "ci"],
+  "author": "Prodgate Contributors",
   "dependencies": {
     "@babel/parser": "^7.29.2",
     "@babel/traverse": "^7.29.0",
