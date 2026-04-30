@@ -34,9 +34,15 @@ program
   .option('--output <file>', 'Write output to a file')
   .option('--strict', 'Fail CI on warnings as well as criticals')
   .action(async (before: string, after: string, options) => {
-    const beforeRoutes = await scanRepo(before)
-    const afterRoutes = await scanRepo(after)
-    const result = diffRoutes(beforeRoutes, afterRoutes)
+    const beforeResult = await scanRepo(before)
+    const afterResult = await scanRepo(after)
+
+    const result = diffRoutes(
+      beforeResult.routes,
+      afterResult.routes,
+      beforeResult.mounts,
+      afterResult.mounts
+    )
 
     let output: string
 

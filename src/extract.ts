@@ -17,6 +17,7 @@ import traverse from '@babel/traverse'
 import * as fs from 'fs'
 import { glob } from 'glob'
 import * as path from 'path'
+import { RouterMount } from './diff'
 
 export const HTTP_METHODS = ['get', 'post', 'put', 'delete', 'patch', 'use']
 
@@ -81,6 +82,64 @@ export function extractRoutes(code: string, filePath: string): Route[] {
   return routes
 }
 
+export function extractRouterMounts(code: string, filePath: string): RouterMount[] {
+  const mounts: RouterMount[] = []
+  let ast: any
+
+  try {
+    ast = parser.parse(code, {
+      sourceType: 'module',
+      plugins: ['typescript']
+    })
+  } catch (e) {
+    return mounts
+  }
+
+  traverse(ast, {
+    CallExpression(nodePath) {
+      const callee = nodePath.node.callee
+      if (callee.type !== 'MemberExpression') return
+      if (callee.property.type !== 'Identifier') return
+      if (callee.property.name !== 'use') return
+
+      const args = nodePath.node.arguments
+      if (args.length < 2) return
+
+      // First arg must be a path string
+      if (args[0].type !== 'StringLiteral') return
+
+      const mountPath = (args[0] as any).value
+
+      // Last arg should be a router/handler identifier
+      const last = args[args.length - 1] as any
+      if (last.type !== 'Identifier') return
+
+      const routerName = last.name
+
+      // Middle args are middleware
+      const middlewares = args.slice(1, -1).flatMap((arg: any) => {
+        if (arg.type === 'ArrayExpression') {
+          return arg.elements.map(extractMiddlewareName)
+        }
+        return extractMiddlewareName(arg)
+      })
+
+      // Only care about mounts that have middleware — these are the ones
+      // that can regress
+      if (middlewares.length === 0) return
+
+      mounts.push({
+        file: filePath,
+        path: mountPath,
+        middlewares,
+        routerName
+      })
+    }
+  })
+
+  return mounts
+}
+
 export function isLikelyRouteFile(code: string): boolean {
   const hasRouterPattern = /\.(get|post|put|delete|patch|use)\s*\(/.test(code)
   const hasExpressImport = /require\s*\(\s*['"]express['"]|from\s*['"]express['"]/.test(code)
@@ -89,7 +148,10 @@ export function isLikelyRouteFile(code: string): boolean {
   return hasRouterPattern && (hasExpressImport || hasRouterVar) && !hasTestPatterns
 }
 
-export async function scanRepo(repoPath: string): Promise<Route[]> {
+export async function scanRepo(repoPath: string): Promise<{
+  routes: Route[]
+  mounts: RouterMount[]
+}> {
   const normalizedPath = repoPath.replace(/\\/g, '/')
   const configPath = path.join(repoPath, 'prodgate.config.json')
   let globPattern = `${normalizedPath}/**/*.{js,ts}`
@@ -121,13 +183,16 @@ export async function scanRepo(repoPath: string): Promise<Route[]> {
   })
 
   const allRoutes: Route[] = []
+  const allMounts: RouterMount[] = []
 
   for (const file of files) {
     const code = fs.readFileSync(file, 'utf8')
     if (!isLikelyRouteFile(code)) continue
     const routes = extractRoutes(code, file)
+    const mounts = extractRouterMounts(code, file)
     if (routes.length > 0) allRoutes.push(...routes)
+    if (mounts.length > 0) allMounts.push(...mounts)
   }
 
-  return allRoutes
+  return { routes: allRoutes, mounts: allMounts }
 }

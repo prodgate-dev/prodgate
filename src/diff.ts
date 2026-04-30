@@ -15,6 +15,13 @@
 
 import { Route } from './extract'
 
+export type RouterMount = {
+  file: string
+  path: string
+  middlewares: string[]
+  routerName: string
+}
+
 export type Severity = 'CRITICAL' | 'WARNING' | 'INFO'
 
 export type DiffEntry = {
@@ -61,7 +68,10 @@ function isAuthMiddleware(name: string): boolean {
   return /auth|require|guard|protect|verify|session|jwt|token|permission|role|super/i.test(name)
 }
 
-export function diffRoutes(before: Route[], after: Route[]): DiffResult {
+export function diffRoutes(before: Route[],after: Route[],beforeMounts: RouterMount[] = [],
+                            afterMounts: RouterMount[] = []):
+                             DiffResult {
+
   const beforeMap = new Map(before.map(r => [routeKey(r), r]))
   const afterMap = new Map(after.map(r => [routeKey(r), r]))
 
@@ -86,6 +96,7 @@ export function diffRoutes(before: Route[], after: Route[]): DiffResult {
 
     const same = bm.length === am.length && bm.every((m, i) => m === am[i])
     if (same) continue
+
 
     if (authLost(bm, am)) {
       const lost = bm.filter(m => !am.includes(m))
@@ -167,6 +178,10 @@ export function diffRoutes(before: Route[], after: Route[]): DiffResult {
     }
   }
 
+  // Check router mount regressions
+  const mountEntries = diffRouterMounts(beforeMounts, afterMounts)
+  entries.push(...mountEntries)
+
   const criticalCount = entries.filter(e => e.severity === 'CRITICAL').length
   const warningCount = entries.filter(e => e.severity === 'WARNING').length
   const infoCount = entries.filter(e => e.severity === 'INFO').length
@@ -183,4 +198,53 @@ export function diffRoutes(before: Route[], after: Route[]): DiffResult {
       infoCount
     }
   }
+}
+
+export function diffRouterMounts(
+  before: RouterMount[],
+  after: RouterMount[]
+): DiffEntry[] {
+  const entries: DiffEntry[] = []
+
+  const mountKey = (m: RouterMount) => {
+    const normalized = m.file.replace(/\\/g, '/')
+    const filename = normalized.split('/').pop() ?? normalized
+    return `${m.path}:${filename}`
+  }
+
+  const beforeMap = new Map(before.map(m => [mountKey(m), m]))
+  const afterMap = new Map(after.map(m => [mountKey(m), m]))
+
+  for (const [key, beforeMount] of beforeMap) {
+    const afterMount = afterMap.get(key)
+    if (!afterMount) continue
+
+    const bm = beforeMount.middlewares
+    const am = afterMount.middlewares
+
+    const same = bm.length === am.length && bm.every((m, i) => m === am[i])
+    if (same) continue
+
+    if (bm.length > am.length) {
+      const lost = bm.filter(m => !am.includes(m))
+      const hasAuthLost = lost.some(isAuthMiddleware)
+
+      entries.push({
+        severity: hasAuthLost ? 'CRITICAL' : 'WARNING',
+        type: 'middleware_removed',
+        route: {
+          file: beforeMount.file,
+          method: 'use',
+          path: beforeMount.path,
+          middlewares: am,
+          handler: beforeMount.routerName
+        },
+        before: bm,
+        after: am,
+        message: `Router mount ${beforeMount.path} lost middleware: ${lost.join(', ')} — all routes under ${beforeMount.path} may now be unprotected`
+      })
+    }
+  }
+
+  return entries
 }
