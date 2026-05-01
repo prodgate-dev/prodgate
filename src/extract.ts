@@ -5,11 +5,12 @@
  *
  * Parses JavaScript and TypeScript source files using @babel/parser,
  * walks the AST to find Express route definitions (router.get, router.post, etc.),
- * and extracts the HTTP method, path, middleware chain, and handler for each route.
+ * and extracts the HTTP method, path, middleware chain, handler, and line number
+ * for each route.
  *
  * Auto-detects route files by checking for Express import patterns and router
  * variable usage. Supports a prodgate.config.json escape hatch for explicit
- * directory configuration.
+ * directory configuration, auth pattern overrides, and ignore paths.
  */
 
 import * as parser from '@babel/parser'
@@ -17,7 +18,6 @@ import traverse from '@babel/traverse'
 import * as fs from 'fs'
 import { glob } from 'glob'
 import * as path from 'path'
-import { RouterMount } from './diff'
 
 export const HTTP_METHODS = ['get', 'post', 'put', 'delete', 'patch', 'use']
 
@@ -27,12 +27,43 @@ export type Route = {
   path: string
   middlewares: string[]
   handler: string
+  line: number
+}
+
+export type RouterMount = {
+  file: string
+  path: string
+  middlewares: string[]
+  routerName: string
+  line: number
+}
+
+export type ProdgateConfig = {
+  routesDir?: string
+  authPatterns?: string[]
+  ignore?: string[]
+  strict?: boolean
+}
+
+export function loadConfig(repoPath: string): ProdgateConfig {
+  const configPath = path.join(repoPath, 'prodgate.config.json')
+  if (!fs.existsSync(configPath)) return {}
+  try {
+    return JSON.parse(fs.readFileSync(configPath, 'utf8'))
+  } catch (e) {
+    return {}
+  }
 }
 
 const extractMiddlewareName = (arg: any): string => {
   if (arg.type === 'Identifier') return arg.name
   if (arg.type === 'CallExpression' && arg.callee.type === 'Identifier') {
     return `${arg.callee.name}(...)`
+  }
+  if (arg.type === 'MemberExpression' &&
+    arg.object.type === 'Identifier' &&
+    arg.property.type === 'Identifier') {
+    return `${arg.object.name}.${arg.property.name}`
   }
   return 'unknown'
 }
@@ -74,8 +105,13 @@ export function extractRoutes(code: string, filePath: string): Route[] {
 
       const last = args[args.length - 1] as any
       const handler = last?.type === 'Identifier' ? last.name : 'unknown'
+      const line = nodePath.node.loc?.start.line ?? 0
 
-      routes.push({ file: filePath, method, path: routePath, middlewares, handler })
+      // Skip router mounts — handled by extractRouterMounts
+      if (method === 'use' && last?.type === 'Identifier' && 
+          /[Rr]outer$/.test(last.name)) return
+
+      routes.push({ file: filePath, method, path: routePath, middlewares, handler, line })
     }
   })
 
@@ -104,19 +140,14 @@ export function extractRouterMounts(code: string, filePath: string): RouterMount
 
       const args = nodePath.node.arguments
       if (args.length < 2) return
-
-      // First arg must be a path string
       if (args[0].type !== 'StringLiteral') return
 
       const mountPath = (args[0] as any).value
-
-      // Last arg should be a router/handler identifier
       const last = args[args.length - 1] as any
       if (last.type !== 'Identifier') return
 
       const routerName = last.name
 
-      // Middle args are middleware
       const middlewares = args.slice(1, -1).flatMap((arg: any) => {
         if (arg.type === 'ArrayExpression') {
           return arg.elements.map(extractMiddlewareName)
@@ -124,16 +155,9 @@ export function extractRouterMounts(code: string, filePath: string): RouterMount
         return extractMiddlewareName(arg)
       })
 
-      // Only care about mounts that have middleware — these are the ones
-      // that can regress
-      if (middlewares.length === 0) return
+      const line = nodePath.node.loc?.start.line ?? 0
 
-      mounts.push({
-        file: filePath,
-        path: mountPath,
-        middlewares,
-        routerName
-      })
+      mounts.push({ file: filePath, path: mountPath, middlewares, routerName, line })
     }
   })
 
@@ -151,20 +175,14 @@ export function isLikelyRouteFile(code: string): boolean {
 export async function scanRepo(repoPath: string): Promise<{
   routes: Route[]
   mounts: RouterMount[]
+  config: ProdgateConfig
 }> {
   const normalizedPath = repoPath.replace(/\\/g, '/')
-  const configPath = path.join(repoPath, 'prodgate.config.json')
-  let globPattern = `${normalizedPath}/**/*.{js,ts}`
+  const config = loadConfig(repoPath)
 
-  if (fs.existsSync(configPath)) {
-    try {
-      const config = JSON.parse(fs.readFileSync(configPath, 'utf8'))
-      if (config.routesDir) {
-        globPattern = `${normalizedPath}/${config.routesDir}/**/*.{js,ts}`
-      }
-    } catch (e) {
-      // malformed config, fall back to auto-detection
-    }
+  let globPattern = `${normalizedPath}/**/*.{js,ts}`
+  if (config.routesDir) {
+    globPattern = `${normalizedPath}/${config.routesDir}/**/*.{js,ts}`
   }
 
   const files = await glob(globPattern, {
@@ -194,5 +212,5 @@ export async function scanRepo(repoPath: string): Promise<{
     if (mounts.length > 0) allMounts.push(...mounts)
   }
 
-  return { routes: allRoutes, mounts: allMounts }
+  return { routes: allRoutes, mounts: allMounts, config }
 }

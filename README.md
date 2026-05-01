@@ -13,24 +13,31 @@ npm install -g prodgate
 ## Usage
 
 ```bash
-prodgate diff <before> <after>
+prodgate check --before <path> --after <path>
 ```
 
-Where `<before>` and `<after>` are paths to two versions of the same repository — typically the base branch and the PR branch.
+Where `--before` is the base version of the repo and `--after` is the changed version.
 
 ### Example output
 
 ```
 Prodgate Access Control Report
 ──────────────────────────────────────────────────
-Routes scanned: 30
+Routes scanned: 28
 
-[CRITICAL] POST /impersonate/:userId lost auth middleware: requireSuperuser(...)
-           Before: requireSuperuser(...)
-           After:  (none)
+[CRITICAL] Access control regression: POST /impersonate/:userId
+  File:   src/api/admin.ts:12
+  Before: requireSuperuser
+  After:  (none)
+  Impact: POST /impersonate/:userId no longer enforces any access control.
+          This endpoint is now publicly accessible.
 
 ──────────────────────────────────────────────────
-Summary: 1 critical
+Authorization changes detected:
+
+  CRITICAL
+    POST /impersonate/:userId   requireSuperuser -> (none)
+
 Verdict: FAIL
 ```
 
@@ -89,8 +96,8 @@ jobs:
       - name: Install prodgate
         run: npm install -g prodgate
 
-      - name: Run prodgate diff
-        run: prodgate diff ./before ./after --json --output prodgate-result.json
+      - name: Run prodgate check
+        run: prodgate check --before ./before --after ./after --json --output prodgate-result.json
         continue-on-error: true
 
       - name: Post PR comment

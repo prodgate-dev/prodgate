@@ -1,10 +1,11 @@
 #!/usr/bin/env node
-
 /**
+ * cli.ts
+ *
  * CLI entry point for prodgate.
  *
  * Commands:
- *   prodgate diff <before> <after>   Diff access control model between two repo versions
+ *   prodgate check --before <path> --after <path>
  *
  * Flags:
  *   --json           Output raw JSON
@@ -12,6 +13,7 @@
  *   --output <file>  Write output to a file
  *   --strict         Fail CI on warnings as well as criticals
  */
+
 
 import { Command } from 'commander'
 import * as fs from 'fs'
@@ -27,21 +29,29 @@ program
   .version(require('../package.json').version)
 
 program
-  .command('diff <before> <after>')
-  .description('Diff access control model between two versions of a repo')
+  .command('check')
+  .description('Check for access control regressions between two versions of a repo')
+  .requiredOption('--before <path>', 'Path to the base version of the repo')
+  .requiredOption('--after <path>', 'Path to the changed version of the repo')
   .option('--json', 'Output raw JSON')
   .option('--github', 'Output GitHub-flavored markdown for PR comments')
   .option('--output <file>', 'Write output to a file')
   .option('--strict', 'Fail CI on warnings as well as criticals')
-  .action(async (before: string, after: string, options) => {
-    const beforeResult = await scanRepo(before)
-    const afterResult = await scanRepo(after)
+  .action(async (options) => {
+    const beforeResult = await scanRepo(options.before)
+    const afterResult = await scanRepo(options.after)
+
+    const ignorePaths = [
+      ...(beforeResult.config.ignore ?? []),
+      ...(afterResult.config.ignore ?? [])
+    ]
 
     const result = diffRoutes(
       beforeResult.routes,
       afterResult.routes,
       beforeResult.mounts,
-      afterResult.mounts
+      afterResult.mounts,
+      ignorePaths
     )
 
     let output: string

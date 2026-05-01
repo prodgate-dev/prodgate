@@ -28,8 +28,8 @@ jobs:
       - name: Install prodgate
         run: npm install -g prodgate
 
-      - name: Run prodgate diff
-        run: prodgate diff ./before ./after --json --output prodgate-result.json
+      - name: Run prodgate check
+        run: prodgate check --before ./before --after ./after --json --output prodgate-result.json
         continue-on-error: true
 
       - name: Post PR comment
