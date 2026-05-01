@@ -152,6 +152,9 @@ export function diffRoutes(before: Route[],after: Route[],beforeMounts: RouterMo
     }
   }
 
+  const shadowEntries = detectShadowedRoutes(after)
+  entries.push(...shadowEntries)
+  
   // Check inconsistent protection across sibling routes
   const routesByPath = new Map<string, Route[]>()
   for (const r of after) {
@@ -166,15 +169,19 @@ export function diffRoutes(before: Route[],after: Route[],beforeMounts: RouterMo
     const withoutAuth = routes.filter(r => !r.middlewares.some(isAuthMiddleware))
     if (withAuth.length > 0 && withoutAuth.length > 0) {
       for (const r of withoutAuth) {
-        const alreadyFlagged = entries.some(e => e.route === r && e.severity === 'CRITICAL')
-        if (alreadyFlagged) continue
-        entries.push({
-          severity: 'WARNING',
-          type: 'inconsistent_protection',
-          route: r,
-          message: `${r.method.toUpperCase()} ${r.path} is unprotected while sibling routes on ${basePath} require auth`
-        })
-      }
+  const alreadyFlagged = entries.some(e => 
+    e.route.path === r.path && 
+    e.route.method === r.method &&
+    e.severity === 'CRITICAL'
+  )
+  if (alreadyFlagged) continue
+  entries.push({
+    severity: 'WARNING',
+    type: 'inconsistent_protection',
+    route: r,
+    message: `${r.method.toUpperCase()} ${r.path} is unprotected while sibling routes on ${basePath} require auth`
+  })
+}
     }
   }
 
@@ -243,6 +250,45 @@ export function diffRouterMounts(
         after: am,
         message: `Router mount ${beforeMount.path} lost middleware: ${lost.join(', ')} — all routes under ${beforeMount.path} may now be unprotected`
       })
+    }
+  }
+
+  return entries
+}
+
+function detectShadowedRoutes(after: Route[]): DiffEntry[] {
+  const entries: DiffEntry[] = []
+
+  // Group routes by method + normalized path
+  const routesByMethodPath = new Map<string, Route[]>()
+
+  for (const r of after) {
+    const key = `${r.method}:${r.path}`
+    const existing = routesByMethodPath.get(key) ?? []
+    routesByMethodPath.set(key, [...existing, r])
+  }
+
+  for (const [, routes] of routesByMethodPath) {
+    if (routes.length < 2) continue
+
+    // Check if any unprotected route appears before a protected one
+    for (let i = 0; i < routes.length; i++) {
+      for (let j = i + 1; j < routes.length; j++) {
+        const earlier = routes[i]
+        const later = routes[j]
+
+        const earlierHasAuth = earlier.middlewares.some(isAuthMiddleware)
+        const laterHasAuth = later.middlewares.some(isAuthMiddleware)
+
+        if (!earlierHasAuth && laterHasAuth) {
+          entries.push({
+            severity: 'CRITICAL',
+            type: 'middleware_removed',
+            route: earlier,
+            message: `${earlier.method.toUpperCase()} ${earlier.path} is unprotected and shadows a protected route of the same path — Express will serve the unprotected handler first`
+          })
+        }
+      }
     }
   }
 
