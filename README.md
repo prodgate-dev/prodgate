@@ -2,7 +2,7 @@
 
 Access control regression detection for Express APIs.
 
-Prodgate diffs the access control model of your Express backend across two versions of a codebase and produces a deterministic pass/fail verdict. It catches authentication and authorization regressions before they ship — specifically the kind introduced silently by AI-generated code changes.
+Prodgate diffs the middleware chain of your Express backend across two versions of a codebase and produces a deterministic pass/fail verdict.
 
 ## Installation
 
@@ -16,48 +16,43 @@ npm install -g prodgate
 prodgate check --before <path> --after <path>
 ```
 
-Where `--before` is the base version of the repo and `--after` is the changed version.
-
 ### Example output
 
 ```
 Prodgate Access Control Report
 ──────────────────────────────────────────────────
 Routes scanned: 28
-
 [CRITICAL] Access control regression: POST /impersonate/:userId
   File:   src/api/admin.ts:12
   Before: requireSuperuser
   After:  (none)
-  Impact: POST /impersonate/:userId no longer enforces any access control.
-          This endpoint is now publicly accessible.
-
+  Impact: POST /impersonate/:userId no longer enforces any access control. This endpoint is now publicly accessible.
 ──────────────────────────────────────────────────
 Authorization changes detected:
-
   CRITICAL
     POST /impersonate/:userId   requireSuperuser -> (none)
-
 Verdict: FAIL
 ```
 
 ## What Prodgate detects
 
 **CRITICAL — fails CI:**
-- Route lost authentication or authorization middleware
+- Route lost auth middleware
+- Router mount lost auth middleware (all child routes affected)
 - New unprotected POST, PUT, DELETE, or PATCH route
-- Auth middleware order changed (runs after handler instead of before)
+- Auth middleware order changed
+- Unprotected route shadows a protected route on the same path
 
 **WARNING — informational by default, fails CI with `--strict`:**
 - New unprotected GET route
-- Inconsistent protection across sibling routes on the same path
+- Inconsistent protection across sibling routes
 
 ## Flags
 
 | Flag | Description |
 |------|-------------|
 | `--json` | Output raw JSON |
-| `--github` | Output GitHub-flavored markdown for PR comments |
+| `--github` | Output GitHub markdown for PR comments |
 | `--output <file>` | Write output to a file |
 | `--strict` | Fail CI on warnings as well as criticals |
 
@@ -111,34 +106,23 @@ jobs:
             const verdict = result.verdict === 'pass' ? 'PASS' : 'FAIL'
             let body = `## Prodgate Access Control Check: ${verdict}\n\n`
             body += `**${result.stats.routesScanned} routes scanned**\n\n`
-            const criticals = result.entries.filter(e => e.severity === 'CRITICAL')
-            const warnings = result.entries.filter(e => e.severity === 'WARNING')
-            const infos = result.entries.filter(e => e.severity === 'INFO')
-            if (criticals.length === 0 && warnings.length === 0 && infos.length === 0) {
+            const criticals = result.findings.filter(f => f.severity === 'CRITICAL')
+            const warnings = result.findings.filter(f => f.severity === 'WARNING')
+            if (criticals.length === 0 && warnings.length === 0) {
               body += `No access control issues detected.\n`
             }
             if (criticals.length > 0) {
               body += `### Critical Issues\n\n`
-              for (const entry of criticals) {
-                body += `**\`${entry.route.method.toUpperCase()} ${entry.route.path}\`**\n`
-                body += `${entry.message}\n`
-                if (entry.before !== undefined && entry.after !== undefined) {
-                  body += `- Before: \`${entry.before.join(' -> ') || '(none)'}\`\n`
-                  body += `- After: \`${entry.after.join(' -> ') || '(none)'}\`\n`
-                }
-                body += `\n`
+              for (const f of criticals) {
+                body += `**\`${f.route.method.toUpperCase()} ${f.route.path}\`** — ${f.message}\n`
+                body += `- Before: \`${f.auth.beforeEffective.join(' -> ') || '(none)'}\`\n`
+                body += `- After: \`${f.auth.afterEffective.join(' -> ') || '(none)'}\`\n\n`
               }
             }
             if (warnings.length > 0) {
               body += `### Warnings\n\n`
-              for (const entry of warnings) {
-                body += `- \`${entry.route.method.toUpperCase()} ${entry.route.path}\` — ${entry.message}\n`
-              }
-            }
-            if (infos.length > 0) {
-              body += `### Info\n\n`
-              for (const entry of infos) {
-                body += `- ${entry.message}\n`
+              for (const f of warnings) {
+                body += `- \`${f.route.method.toUpperCase()} ${f.route.path}\` — ${f.message}\n`
               }
             }
             github.rest.issues.createComment({
@@ -154,7 +138,7 @@ jobs:
             const fs = require('fs');
             const result = JSON.parse(fs.readFileSync('prodgate-result.json', 'utf8'));
             if (result.verdict === 'fail') {
-              console.log('Prodgate detected critical access control issues.');
+              console.log('Prodgate detected critical access control regressions.');
               process.exit(1);
             }
             console.log('Prodgate check passed.');
@@ -169,10 +153,20 @@ If auto-detection doesn't work for your project structure, create a `prodgate.co
 
 ```json
 {
-  "routesDir": "src/routes"
+  "routesDir": "src/routes",
+  "authPatterns": ["requireAuth", "requireAdmin"],
+  "ignore": ["/health", "/metrics"]
 }
 ```
 
-## What Prodgate does not do
+## Limitations
 
-Prodgate analyzes middleware names and structure — it does not execute your code or make network requests. It works entirely on static analysis of your source files.
+- Express only. NestJS, FastAPI, and Rails support is planned.
+- Static analysis only — does not execute code or make network requests.
+- Middleware identity is name and structure based. Renamed or wrapped middleware may not be detected correctly.
+- Dynamic route registration patterns may be missed.
+- Router-to-route matching uses naming conventions. Unusual naming may require `routesDir` configuration.
+
+## Demo
+
+See [prodgate-demo](https://github.com/prodgate-dev/prodgate-demo) for two worked examples with real CLI output.
