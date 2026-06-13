@@ -67,7 +67,7 @@ export type DiffResult = {
   }
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+//HELPERS
 
 export function canonicalizeMiddleware(name: string): string {
   // Strip trailing () from call expressions
@@ -126,7 +126,7 @@ function orderChanged(before: string[], after: string[]): boolean {
   return before.some((m, i) => m !== after[i])
 }
 
-// ─── Detection Functions ───────────────────────────────────────────────────────
+//Detection Functions
 
 function detectRouteChanges(
   before: Route[],
@@ -145,8 +145,10 @@ function detectRouteChanges(
     const afterRoute = afterMap.get(key)
     if (!afterRoute) continue
 
-    const beforeEff = effectiveMiddlewares(beforeRoute, beforeMounts)
-    const afterEff = effectiveMiddlewares(afterRoute, afterMounts)
+    // Use route-level middleware only for detecting route-level regressions
+    // Router-level auth removal is handled separately by detectRouterAuthRemoval
+    const beforeEff = beforeRoute.middlewares.map(canonicalizeMiddleware)
+    const afterEff = afterRoute.middlewares.map(canonicalizeMiddleware)
 
     const removed = beforeEff.filter(m => !afterEff.includes(m))
     const added = afterEff.filter(m => !beforeEff.includes(m))

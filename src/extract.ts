@@ -172,6 +172,43 @@ export function isLikelyRouteFile(code: string): boolean {
   return hasRouterPattern && (hasExpressImport || hasRouterVar) && !hasTestPatterns
 }
 
+/**
+ * Resolves the full mounted path for each route by matching routes to their
+ * router mount points.
+ *
+ * This is a heuristic based on naming conventions — adminRouter is expected
+ * to be defined in a file containing "admin" in the path. This covers the
+ * vast majority of real Express codebases but will miss unusual naming.
+ *
+ * For repos where this heuristic gets it wrong, users can specify routesDir
+ * in prodgate.config.json to scope extraction explicitly.
+ */
+export function resolveFullPaths(
+  routes: Route[],
+  mounts: RouterMount[]
+): Route[] {
+  return routes.map(route => {
+    const normalizedFile = route.file.replace(/\\/g, '/')
+    // Only match against the filename, not the full path
+    // This prevents false matches on directory names like C:/Users/...
+    const filename = normalizedFile.split('/').pop()?.toLowerCase() ?? ''
+
+    const mount = mounts.find(m => {
+      const routerName = m.routerName.toLowerCase()
+      const baseName = routerName.replace(/router$/i, '')
+      return filename.includes(baseName) || filename.includes(routerName)
+    })
+
+    if (!mount) return route
+
+    const mountPath = mount.path.replace(/\/$/, '')
+    const routePath = route.path.startsWith('/') ? route.path : `/${route.path}`
+    const fullPath = `${mountPath}${routePath}`
+
+    return { ...route, path: fullPath }
+  })
+}
+
 export async function scanRepo(repoPath: string): Promise<{
   routes: Route[]
   mounts: RouterMount[]
@@ -212,5 +249,8 @@ export async function scanRepo(repoPath: string): Promise<{
     if (mounts.length > 0) allMounts.push(...mounts)
   }
 
-  return { routes: allRoutes, mounts: allMounts, config }
+  
+  const resolvedRoutes = resolveFullPaths(allRoutes, allMounts)
+  
+  return { routes: resolvedRoutes, mounts: allMounts, config }
 }
