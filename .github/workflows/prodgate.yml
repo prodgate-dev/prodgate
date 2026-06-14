@@ -11,6 +11,7 @@ jobs:
       contents: read
       pull-requests: write
       issues: write
+
     steps:
       - name: Checkout PR branch
         uses: actions/checkout@v4
@@ -76,3 +77,15 @@ jobs:
             } catch (e) {
               console.log('Could not post PR comment:', e.message)
             }
+
+      - name: Fail if critical issues detected
+        run: |
+          node -e "
+            const fs = require('fs');
+            const result = JSON.parse(fs.readFileSync('prodgate-result.json', 'utf8'));
+            if (result.verdict === 'fail') {
+              console.log('Prodgate detected critical access control regressions.');
+              process.exit(1);
+            }
+            console.log('Prodgate check passed.');
+          "
