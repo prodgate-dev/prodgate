@@ -31,7 +31,7 @@ function formatImpact(finding: Finding): string {
       return `${method} ${routePath} was added with no access control middleware.`
 
     case 'router_auth_removed':
-      return `All routes mounted under ${routePath} may now be accessible without authentication or authorization.`
+      return `Routes under ${routePath} that relied on this mount guard are now reachable without authentication or authorization.`
 
     case 'shadowed_route':
       return `Express matches routes in order. The unprotected handler at ${routePath} will run before the protected one.`

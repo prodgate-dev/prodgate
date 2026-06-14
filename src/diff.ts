@@ -275,9 +275,22 @@ function detectRouterAuthRemoval(
     const lostAuth = removed.some(isAuthMiddleware)
     if (!lostAuth) continue
 
-    const affected = afterRoutes
-      .filter(r => r.path.startsWith(afterMount.path) || r.file.includes(afterMount.routerName))
-      .map(r => `${r.method.toUpperCase()} ${r.path}`)
+    // Only routes that actually lose all effective auth are exposed. A route
+    // that keeps its own route-level guard is still protected, so flagging it
+    // would be a false positive. If every child route retains auth, the mount
+    // guard was redundant and this is not a regression: suppress entirely.
+    const exposed = afterRoutes.filter(r => {
+      const underMount = r.path.startsWith(afterMount.path) ||
+        r.file.includes(afterMount.routerName)
+      if (!underMount) return false
+      const beforeEff = effectiveMiddlewares(r, beforeMounts)
+      const afterEff = effectiveMiddlewares(r, afterMounts)
+      return beforeEff.some(isAuthMiddleware) && !afterEff.some(isAuthMiddleware)
+    })
+
+    if (exposed.length === 0) continue
+
+    const affected = exposed.map(r => `${r.method.toUpperCase()} ${r.path}`)
 
     findings.push({
       severity: 'CRITICAL',
