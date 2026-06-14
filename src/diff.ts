@@ -43,6 +43,9 @@ export type Finding = {
     orderChanged: boolean
   }
   message: string
+  // Route-free one-line description for contexts that already show the route
+  // separately (e.g. the bolded route in a PR comment), avoiding duplication.
+  summary: string
   rootCause?: {
     type: 'router_middleware_removed' | 'route_middleware_removed' | 'route_order_conflict'
     scope: string
@@ -190,6 +193,9 @@ function detectRouteChanges(
         orderChanged: false
       },
       message: `Access control regression: ${afterRoute.method.toUpperCase()} ${afterRoute.path}`,
+      summary: deltaType === 'protected_to_unprotected'
+        ? 'no longer enforces any access control'
+        : 'access control weakened',
       rootCause: {
         type: 'route_middleware_removed',
         scope: afterRoute.path
@@ -236,7 +242,8 @@ function detectNewUnprotectedRoutes(
         added: afterEff,
         orderChanged: false
       },
-      message: `New unprotected route: ${afterRoute.method.toUpperCase()} ${afterRoute.path}`
+      message: `New unprotected route: ${afterRoute.method.toUpperCase()} ${afterRoute.path}`,
+      summary: 'new route with no auth middleware'
     })
   }
 
@@ -309,6 +316,7 @@ function detectRouterAuthRemoval(
         orderChanged: false
       },
       message: `Access control regression: Router ${afterMount.path} lost auth middleware`,
+      summary: 'router mount lost auth middleware',
       rootCause: {
         type: 'router_middleware_removed',
         scope: afterMount.path
@@ -363,7 +371,8 @@ function detectShadowedRoutes(
               added: [],
               orderChanged: false
             },
-            message: `Route reachability conflict: ${earlier.method.toUpperCase()} ${earlier.path} is unprotected and Express will match it before the protected handler`
+            message: `Route reachability conflict: ${earlier.method.toUpperCase()} ${earlier.path} is unprotected and Express will match it before the protected handler`,
+            summary: 'unprotected and matched before the protected handler'
           })
         }
       }
@@ -424,6 +433,7 @@ function detectInconsistentSiblings(
           orderChanged: false
         },
         message: `${r.method.toUpperCase()} ${r.path} is unprotected while sibling routes require auth`,
+        summary: 'unprotected while sibling routes require auth',
         siblingContext: withAuth.map(s => ({
           path: s.path,
           method: s.method,

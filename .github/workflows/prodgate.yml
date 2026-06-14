@@ -57,7 +57,7 @@ jobs:
               if (criticals.length > 0) {
                 body += `### Critical Issues\n\n`
                 for (const f of criticals) {
-                  body += `**\`${f.route.method.toUpperCase()} ${f.route.path}\`**: ${f.message}\n`
+                  body += `**\`${f.route.method.toUpperCase()} ${f.route.path}\`**: ${f.summary}\n`
                   body += `- Before: \`${f.auth.beforeEffective.join(' -> ') || '(none)'}\`\n`
                   body += `- After: \`${f.auth.afterEffective.join(' -> ') || '(none)'}\`\n\n`
                 }
@@ -65,7 +65,7 @@ jobs:
               if (warnings.length > 0) {
                 body += `### Warnings\n\n`
                 for (const f of warnings) {
-                  body += `- \`${f.route.method.toUpperCase()} ${f.route.path}\`: ${f.message}\n`
+                  body += `- \`${f.route.method.toUpperCase()} ${f.route.path}\`: ${f.summary}\n`
                 }
               }
               await github.rest.issues.createComment({

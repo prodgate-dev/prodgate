@@ -188,7 +188,7 @@ export function formatGithub(result: DiffResult): string {
     lines.push(`### Critical Issues`)
     for (const f of criticals) {
       lines.push(``)
-      lines.push(`**\`${f.route.method.toUpperCase()} ${f.route.path}\`**: ${f.message}`)
+      lines.push(`**\`${f.route.method.toUpperCase()} ${f.route.path}\`**: ${f.summary}`)
       lines.push(`- File: \`${formatFilePath(f.route.file, f.route.line)}\``)
       lines.push(`- Before: \`${formatAuthChain(f.auth.beforeEffective)}\``)
       lines.push(`- After: \`${formatAuthChain(f.auth.afterEffective)}\``)
@@ -205,7 +205,7 @@ export function formatGithub(result: DiffResult): string {
     lines.push(`### Warnings`)
     for (const f of warnings) {
       lines.push(``)
-      lines.push(`**\`${f.route.method.toUpperCase()} ${f.route.path}\`**: ${f.message}`)
+      lines.push(`**\`${f.route.method.toUpperCase()} ${f.route.path}\`**: ${f.summary}`)
       lines.push(`- File: \`${formatFilePath(f.route.file, f.route.line)}\``)
       const impact = formatImpact(f)
       if (impact) lines.push(`- ${impact}`)
