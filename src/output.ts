@@ -27,9 +27,6 @@ function formatImpact(finding: Finding): string {
       const lost = finding.auth.removed.join(', ')
       return `${method} ${routePath} lost ${lost}. Access control is weaker than before.`
 
-    case 'order_changed':
-      return `${method} ${routePath} has auth middleware in a different position. Auth may run after the handler executes.`
-
     case 'new_unprotected_route':
       return `${method} ${routePath} was added with no access control middleware.`
 
@@ -191,7 +188,7 @@ export function formatGithub(result: DiffResult): string {
     lines.push(`### Critical Issues`)
     for (const f of criticals) {
       lines.push(``)
-      lines.push(`**\`${f.route.method.toUpperCase()} ${f.route.path}\`** — ${f.message}`)
+      lines.push(`**\`${f.route.method.toUpperCase()} ${f.route.path}\`**: ${f.message}`)
       lines.push(`- File: \`${formatFilePath(f.route.file, f.route.line)}\``)
       lines.push(`- Before: \`${formatAuthChain(f.auth.beforeEffective)}\``)
       lines.push(`- After: \`${formatAuthChain(f.auth.afterEffective)}\``)
@@ -208,7 +205,7 @@ export function formatGithub(result: DiffResult): string {
     lines.push(`### Warnings`)
     for (const f of warnings) {
       lines.push(``)
-      lines.push(`**\`${f.route.method.toUpperCase()} ${f.route.path}\`** — ${f.message}`)
+      lines.push(`**\`${f.route.method.toUpperCase()} ${f.route.path}\`**: ${f.message}`)
       lines.push(`- File: \`${formatFilePath(f.route.file, f.route.line)}\``)
       const impact = formatImpact(f)
       if (impact) lines.push(`- ${impact}`)

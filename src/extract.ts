@@ -107,7 +107,7 @@ export function extractRoutes(code: string, filePath: string): Route[] {
       const handler = last?.type === 'Identifier' ? last.name : 'unknown'
       const line = nodePath.node.loc?.start.line ?? 0
 
-      // Skip router mounts — handled by extractRouterMounts
+      // Skip router mounts, handled by extractRouterMounts
       if (method === 'use' && last?.type === 'Identifier' && 
           /[Rr]outer$/.test(last.name)) return
 
@@ -176,7 +176,7 @@ export function isLikelyRouteFile(code: string): boolean {
  * Resolves the full mounted path for each route by matching routes to their
  * router mount points.
  *
- * This is a heuristic based on naming conventions — adminRouter is expected
+ * This is a heuristic based on naming conventions. adminRouter is expected
  * to be defined in a file containing "admin" in the path. This covers the
  * vast majority of real Express codebases but will miss unusual naming.
  *

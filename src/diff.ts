@@ -1,12 +1,12 @@
 /**
  * Compares two route snapshots and produces a structured diff result.
  *
- * Detects access control regressions across six categories:
+ * Detects access control regressions across these categories:
  *   - Route lost auth middleware (CRITICAL)
- *   - Auth middleware order changed (CRITICAL)
+ *   - Privilege weakened on a mutation route (CRITICAL)
  *   - New unprotected mutation route (CRITICAL)
  *   - Router-level auth removed (CRITICAL)
- *   - Shadowed route — unprotected handler runs before protected one (WARNING)
+ *   - Shadowed route: unprotected handler matches before the protected one (CRITICAL)
  *   - Inconsistent sibling protection (WARNING)
  *
  * Returns a DiffResult with route-centric Finding entries and a deterministic
@@ -19,7 +19,6 @@ import { Route, RouterMount } from './extract'
 export type DeltaType =
   | 'protected_to_unprotected'
   | 'privilege_weakened'
-  | 'order_changed'
   | 'new_unprotected_route'
   | 'inconsistent_with_siblings'
   | 'shadowed_route'
@@ -88,7 +87,6 @@ function isMutationMethod(method: string): boolean {
 function computeSeverity(deltaType: DeltaType, method: string): Severity {
   if (deltaType === 'protected_to_unprotected') return 'CRITICAL'
   if (deltaType === 'router_auth_removed') return 'CRITICAL'
-  if (deltaType === 'order_changed') return 'CRITICAL'
   if (deltaType === 'privilege_weakened' && isMutationMethod(method)) return 'CRITICAL'
   if (deltaType === 'new_unprotected_route' && isMutationMethod(method)) return 'CRITICAL'
   if (deltaType === 'shadowed_route') return 'CRITICAL'
@@ -120,14 +118,6 @@ function effectiveMiddlewares(
   return [...new Set([...routerMw, ...routeMw])]
 }
 
-function orderChanged(before: string[], after: string[]): boolean {
-  if (before.length !== after.length) return false
-  const sameElements = before.every(m => after.includes(m)) &&
-    after.every(m => before.includes(m))
-  if (!sameElements) return false
-  return before.some((m, i) => m !== after[i])
-}
-
 //Detection Functions
 
 function detectRouteChanges(
@@ -147,7 +137,7 @@ function detectRouteChanges(
     const afterRoute = afterMap.get(key)
     if (!afterRoute) continue
 
-    // Compute effective auth — combines mount-level and route-level middleware
+    // Compute effective auth: combines mount-level and route-level middleware
     const beforeEff = effectiveMiddlewares(beforeRoute, beforeMounts)
     const afterEff = effectiveMiddlewares(afterRoute, afterMounts)
 
@@ -157,10 +147,9 @@ function detectRouteChanges(
 
     const removed = beforeEff.filter(m => !afterEff.includes(m))
     const added = afterEff.filter(m => !beforeEff.includes(m))
-    const changed = orderChanged(beforeLocal, afterLocal)
 
     // If effective auth didn't change, no finding needed
-    if (removed.length === 0 && added.length === 0 && !changed) continue
+    if (removed.length === 0 && added.length === 0) continue
 
     const hadAuth = beforeEff.some(isAuthMiddleware)
     const hasAuth = afterEff.some(isAuthMiddleware)
@@ -168,7 +157,7 @@ function detectRouteChanges(
     const weakened = hadAuth && hasAuth && removed.some(isAuthMiddleware)
 
     // Route-local middleware changed but mount-level auth still fully protects
-    // the route — suppress, this is not a regression
+    // the route, so suppress; this is not a regression
     const localChanged = beforeLocal.join(',') !== afterLocal.join(',')
     const effectivelyUnchanged = removed.length === 0 && added.length === 0
     if (localChanged && effectivelyUnchanged) continue
@@ -176,8 +165,6 @@ function detectRouteChanges(
     let deltaType: DeltaType
     if (lostAuth) {
       deltaType = 'protected_to_unprotected'
-    } else if (changed && removed.some(isAuthMiddleware)) {
-      deltaType = 'order_changed'
     } else if (weakened) {
       deltaType = 'privilege_weakened'
     } else {
@@ -200,7 +187,7 @@ function detectRouteChanges(
         afterEffective: afterEff,
         removed,
         added,
-        orderChanged: changed
+        orderChanged: false
       },
       message: `Access control regression: ${afterRoute.method.toUpperCase()} ${afterRoute.path}`,
       rootCause: {
@@ -322,6 +309,7 @@ function detectRouterAuthRemoval(
 
 function detectShadowedRoutes(
   after: Route[],
+  mounts: RouterMount[],
   ignorePaths: string[]
 ): Finding[] {
   const findings: Finding[] = []
@@ -340,8 +328,10 @@ function detectShadowedRoutes(
       for (let j = i + 1; j < routes.length; j++) {
         const earlier = routes[i]
         const later = routes[j]
-        const earlierHasAuth = earlier.middlewares.some(isAuthMiddleware)
-        const laterHasAuth = later.middlewares.some(isAuthMiddleware)
+        // Use effective auth (mount + route level) so a route protected only
+        // by its router mount is not mistaken for unprotected.
+        const earlierHasAuth = effectiveMiddlewares(earlier, mounts).some(isAuthMiddleware)
+        const laterHasAuth = effectiveMiddlewares(later, mounts).some(isAuthMiddleware)
 
         if (!earlierHasAuth && laterHasAuth) {
           findings.push({
@@ -355,7 +345,7 @@ function detectShadowedRoutes(
             },
             auth: {
               beforeEffective: [],
-              afterEffective: earlier.middlewares.map(canonicalizeMiddleware),
+              afterEffective: effectiveMiddlewares(earlier, mounts),
               removed: [],
               added: [],
               orderChanged: false
@@ -372,6 +362,7 @@ function detectShadowedRoutes(
 
 function detectInconsistentSiblings(
   after: Route[],
+  mounts: RouterMount[],
   findings: Finding[],
   ignorePaths: string[]
 ): Finding[] {
@@ -387,8 +378,12 @@ function detectInconsistentSiblings(
 
   for (const [basePath, routes] of routesByBase) {
     if (routes.length < 2) continue
-    const withAuth = routes.filter(r => r.middlewares.some(isAuthMiddleware))
-    const withoutAuth = routes.filter(r => !r.middlewares.some(isAuthMiddleware))
+    // Compare effective auth, not route-local middleware: a route protected by
+    // its router mount is protected even with no route-level guard.
+    const hasEffectiveAuth = (r: Route) =>
+      effectiveMiddlewares(r, mounts).some(isAuthMiddleware)
+    const withAuth = routes.filter(hasEffectiveAuth)
+    const withoutAuth = routes.filter(r => !hasEffectiveAuth(r))
     if (withAuth.length === 0 || withoutAuth.length === 0) continue
 
     for (const r of withoutAuth) {
@@ -410,7 +405,7 @@ function detectInconsistentSiblings(
         },
         auth: {
           beforeEffective: [],
-          afterEffective: r.middlewares.map(canonicalizeMiddleware),
+          afterEffective: effectiveMiddlewares(r, mounts),
           removed: [],
           added: [],
           orderChanged: false
@@ -419,7 +414,7 @@ function detectInconsistentSiblings(
         siblingContext: withAuth.map(s => ({
           path: s.path,
           method: s.method,
-          middlewares: s.middlewares.map(canonicalizeMiddleware)
+          middlewares: effectiveMiddlewares(s, mounts)
         }))
       })
     }
@@ -439,7 +434,7 @@ export function diffRoutes(
 ): DiffResult {
   const findings: Finding[] = []
 
-  // Router-level auth removal first — needed for dedup
+  // Router-level auth removal first, needed for dedup
   const routerFindings = detectRouterAuthRemoval(beforeMounts, afterMounts, after, ignorePaths)
   findings.push(...routerFindings)
 
@@ -457,11 +452,11 @@ export function diffRoutes(
   }
 
   // Shadowed routes
-  const shadowFindings = detectShadowedRoutes(after, ignorePaths)
+  const shadowFindings = detectShadowedRoutes(after, afterMounts, ignorePaths)
   findings.push(...shadowFindings)
 
-  // Inconsistent siblings — must come after shadow so dedup works
-  const siblingFindings = detectInconsistentSiblings(after, findings, ignorePaths)
+  // Inconsistent siblings: must come after shadow so dedup works
+  const siblingFindings = detectInconsistentSiblings(after, afterMounts, findings, ignorePaths)
   findings.push(...siblingFindings)
 
   // New unprotected routes

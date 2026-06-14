@@ -36,14 +36,13 @@ Verdict: FAIL
 
 ## What Prodgate detects
 
-**CRITICAL — fails CI:**
+**CRITICAL (fails CI):**
 - Route lost auth middleware
 - Router mount lost auth middleware (all child routes affected)
 - New unprotected POST, PUT, DELETE, or PATCH route
-- Auth middleware order changed
 - Unprotected route shadows a protected route on the same path
 
-**WARNING — informational by default, fails CI with `--strict`:**
+**WARNING (informational by default, fails CI with `--strict`):**
 - New unprotected GET route
 - Inconsistent protection across sibling routes
 
@@ -70,6 +69,10 @@ on:
 jobs:
   prodgate:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
 
     steps:
       - name: Checkout PR branch
@@ -86,7 +89,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
 
       - name: Install prodgate
         run: npm install -g prodgate
@@ -97,40 +100,45 @@ jobs:
 
       - name: Post PR comment
         if: always()
+        continue-on-error: true
         uses: actions/github-script@v7
         with:
           script: |
-            const fs = require('fs')
-            if (!fs.existsSync('prodgate-result.json')) return
-            const result = JSON.parse(fs.readFileSync('prodgate-result.json', 'utf8'))
-            const verdict = result.verdict === 'pass' ? 'PASS' : 'FAIL'
-            let body = `## Prodgate Access Control Check: ${verdict}\n\n`
-            body += `**${result.stats.routesScanned} routes scanned**\n\n`
-            const criticals = result.findings.filter(f => f.severity === 'CRITICAL')
-            const warnings = result.findings.filter(f => f.severity === 'WARNING')
-            if (criticals.length === 0 && warnings.length === 0) {
-              body += `No access control issues detected.\n`
-            }
-            if (criticals.length > 0) {
-              body += `### Critical Issues\n\n`
-              for (const f of criticals) {
-                body += `**\`${f.route.method.toUpperCase()} ${f.route.path}\`** — ${f.message}\n`
-                body += `- Before: \`${f.auth.beforeEffective.join(' -> ') || '(none)'}\`\n`
-                body += `- After: \`${f.auth.afterEffective.join(' -> ') || '(none)'}\`\n\n`
+            try {
+              const fs = require('fs')
+              if (!fs.existsSync('prodgate-result.json')) return
+              const result = JSON.parse(fs.readFileSync('prodgate-result.json', 'utf8'))
+              const verdict = result.verdict === 'pass' ? 'PASS' : 'FAIL'
+              let body = `## Prodgate Access Control Check: ${verdict}\n\n`
+              body += `**${result.stats.routesScanned} routes scanned**\n\n`
+              const criticals = result.findings.filter(f => f.severity === 'CRITICAL')
+              const warnings = result.findings.filter(f => f.severity === 'WARNING')
+              if (criticals.length === 0 && warnings.length === 0) {
+                body += `No access control issues detected.\n`
               }
-            }
-            if (warnings.length > 0) {
-              body += `### Warnings\n\n`
-              for (const f of warnings) {
-                body += `- \`${f.route.method.toUpperCase()} ${f.route.path}\` — ${f.message}\n`
+              if (criticals.length > 0) {
+                body += `### Critical Issues\n\n`
+                for (const f of criticals) {
+                  body += `**\`${f.route.method.toUpperCase()} ${f.route.path}\`**: ${f.message}\n`
+                  body += `- Before: \`${f.auth.beforeEffective.join(' -> ') || '(none)'}\`\n`
+                  body += `- After: \`${f.auth.afterEffective.join(' -> ') || '(none)'}\`\n\n`
+                }
               }
+              if (warnings.length > 0) {
+                body += `### Warnings\n\n`
+                for (const f of warnings) {
+                  body += `- \`${f.route.method.toUpperCase()} ${f.route.path}\`: ${f.message}\n`
+                }
+              }
+              await github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body
+              })
+            } catch (e) {
+              console.log('Could not post PR comment:', e.message)
             }
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body
-            })
 
       - name: Fail if critical issues detected
         run: |
@@ -162,8 +170,8 @@ If auto-detection doesn't work for your project structure, create a `prodgate.co
 ## Limitations
 
 - Express only. NestJS, FastAPI, and Rails support is planned.
-- Static analysis only — does not execute code or make network requests.
-- Middleware identity is name and structure based. Renamed or wrapped middleware may not be detected correctly.
+- Static analysis only. It does not execute code or make network requests.
+- Middleware identity is based on name and structure. Renamed or wrapped middleware may not be detected correctly.
 - Dynamic route registration patterns may be missed.
 - Router-to-route matching uses naming conventions. Unusual naming may require `routesDir` configuration.
 
