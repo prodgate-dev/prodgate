@@ -5,11 +5,11 @@
   "license": "MIT",
   "main": "dist/cli.js",
   "bin": {
-    "prodgate": "./dist/cli.js"
+    "prodgate": "dist/cli.js"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/prodgate-dev/prodgate.git"
+    "url": "git+https://github.com/prodgate-dev/prodgate.git"
   },
   "homepage": "https://github.com/prodgate-dev/prodgate",
   "bugs": {
