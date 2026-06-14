@@ -109,8 +109,10 @@ function effectiveMiddlewares(
   route: Route,
   mounts: RouterMount[]
 ): string[] {
+  // routes have full paths via resolveFullPaths,
+  // mounts can be matched by path prefix rather than filename heuristic
   const routerMw = mounts
-    .filter(m => route.path.startsWith(m.path) || route.file.includes(m.routerName))
+    .filter(m => route.path.startsWith(m.path))
     .flatMap(m => m.middlewares)
     .map(canonicalizeMiddleware)
 
@@ -145,24 +147,31 @@ function detectRouteChanges(
     const afterRoute = afterMap.get(key)
     if (!afterRoute) continue
 
-    // Use route-level middleware only for detecting route-level regressions
-    // Router-level auth removal is handled separately by detectRouterAuthRemoval
-    const beforeEff = beforeRoute.middlewares.map(canonicalizeMiddleware)
-    const afterEff = afterRoute.middlewares.map(canonicalizeMiddleware)
+    // Compute effective auth — combines mount-level and route-level middleware
+    const beforeEff = effectiveMiddlewares(beforeRoute, beforeMounts)
+    const afterEff = effectiveMiddlewares(afterRoute, afterMounts)
+
+    // Compute route-local changes for display
+    const beforeLocal = beforeRoute.middlewares.map(canonicalizeMiddleware)
+    const afterLocal = afterRoute.middlewares.map(canonicalizeMiddleware)
 
     const removed = beforeEff.filter(m => !afterEff.includes(m))
     const added = afterEff.filter(m => !beforeEff.includes(m))
-    const changed = orderChanged(
-      beforeRoute.middlewares.map(canonicalizeMiddleware),
-      afterRoute.middlewares.map(canonicalizeMiddleware)
-    )
+    const changed = orderChanged(beforeLocal, afterLocal)
 
+    // If effective auth didn't change, no finding needed
     if (removed.length === 0 && added.length === 0 && !changed) continue
 
     const hadAuth = beforeEff.some(isAuthMiddleware)
     const hasAuth = afterEff.some(isAuthMiddleware)
     const lostAuth = hadAuth && !hasAuth
     const weakened = hadAuth && hasAuth && removed.some(isAuthMiddleware)
+
+    // Route-local middleware changed but mount-level auth still fully protects
+    // the route — suppress, this is not a regression
+    const localChanged = beforeLocal.join(',') !== afterLocal.join(',')
+    const effectivelyUnchanged = removed.length === 0 && added.length === 0
+    if (localChanged && effectivelyUnchanged) continue
 
     let deltaType: DeltaType
     if (lostAuth) {

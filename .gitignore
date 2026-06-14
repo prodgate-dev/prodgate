@@ -4,4 +4,3 @@ dist/
 .env
 *.log
 npm-debug.log*
-test/

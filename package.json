@@ -22,7 +22,7 @@
     "build": "tsc",
     "prepublishOnly": "npm run build",
     "dev": "ts-node src/cli.ts",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "ts-node test/case2.ts && ts-node test/case6.ts"
   },
   "keywords": [
     "security",
