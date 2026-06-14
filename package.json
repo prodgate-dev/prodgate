@@ -1,6 +1,6 @@
 {
   "name": "prodgate",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Access control regression detection for Express APIs",
   "license": "MIT",
   "main": "dist/cli.js",
