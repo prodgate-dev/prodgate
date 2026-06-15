@@ -14,18 +14,18 @@ jobs:
 
     steps:
       - name: Checkout PR branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           path: after
 
       - name: Checkout base branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ github.base_ref }}
           path: before
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: '22'
 
@@ -39,7 +39,7 @@ jobs:
       - name: Post PR comment
         if: always()
         continue-on-error: true
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             try {
@@ -59,7 +59,11 @@ jobs:
                 for (const f of criticals) {
                   body += `**\`${f.route.method.toUpperCase()} ${f.route.path}\`**: ${f.summary}\n`
                   body += `- Before: \`${f.auth.beforeEffective.join(' -> ') || '(none)'}\`\n`
-                  body += `- After: \`${f.auth.afterEffective.join(' -> ') || '(none)'}\`\n\n`
+                  body += `- After: \`${f.auth.afterEffective.join(' -> ') || '(none)'}\`\n`
+                  if (f.affectedRoutes && f.affectedRoutes.length > 0) {
+                    body += `- Affected routes: ${f.affectedRoutes.join(', ')}\n`
+                  }
+                  body += `\n`
                 }
               }
               if (warnings.length > 0) {

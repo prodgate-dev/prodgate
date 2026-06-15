@@ -1,6 +1,6 @@
 {
   "name": "prodgate",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Access control regression detection for Express APIs",
   "license": "MIT",
   "main": "dist/cli.js",
@@ -36,7 +36,7 @@
     "@babel/traverse": "^7.29.0",
     "@babel/types": "^7.29.0",
     "commander": "^14.0.0",
-    "glob": "^11.0.3"
+    "glob": "^13.0.6"
   },
   "devDependencies": {
     "@types/babel__traverse": "^7.28.0",
