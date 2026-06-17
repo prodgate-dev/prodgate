@@ -12,6 +12,11 @@ npm install -g prodgate
 
 ## Usage
 
+Prodgate has two commands:
+
+- `check` diffs two versions of a repo and fails CI when a PR removes a guard.
+- `scan` reports the current access-control state of a single codebase.
+
 ```bash
 prodgate check --before <path> --after <path>
 ```
@@ -33,6 +38,40 @@ Authorization changes detected:
     POST /impersonate/:userId   requireSuperuser -> (none)
 Verdict: FAIL
 ```
+
+## Scanning a single codebase
+
+`check` only speaks up when a PR removes a guard. To see the current exposure of a repo, without a diff, use `scan`:
+
+```bash
+prodgate scan <path>
+```
+
+It classifies every route by its effective auth (mount-level plus route-level guards):
+
+```
+Prodgate Access Control Report
+──────────────────────────────────────────────────
+Routes scanned: 12
+
+[CRITICAL] 1 mutation route has no auth
+
+  DELETE /items/:id                   src/routes/items.ts:4
+
+[VERIFY] 1 route uses middleware Prodgate could not classify as auth
+(could be a custom guard; confirm these are intentional)
+
+  GET    /items/secret                src/routes/items.ts:6   (ensureLoggedIn)
+
+[INFO] 1 route looks public by convention (login, health, webhooks)
+
+  POST   /auth/login                  src/routes/auth.ts:6
+
+──────────────────────────────────────────────────
+Summary: 12 routes. 9 protected, 1 unprotected mutations, 1 to verify, 1 public by convention
+```
+
+`scan` leads with unprotected **mutation** routes (the dangerous ones). Routes guarded by middleware Prodgate cannot name-match (a custom `checkUser`, an inline function) are reported as **to verify** rather than unprotected, so it never falsely claims a guarded route is open. Login, health, and webhook style routes are surfaced as **public by convention** instead of alarmed on. `scan` is informational and exits 0 by default; pass `--strict` to fail when a mutation route has no auth.
 
 ## What Prodgate detects
 

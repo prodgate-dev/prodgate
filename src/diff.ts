@@ -83,8 +83,19 @@ export function isAuthMiddleware(name: string): boolean {
   return /auth|require|guard|protect|verify|session|jwt|token|permission|role|super/i.test(name)
 }
 
-function isMutationMethod(method: string): boolean {
+export function isMutationMethod(method: string): boolean {
   return ['post', 'put', 'delete', 'patch'].includes(method.toLowerCase())
+}
+
+/**
+ * Whether a route path falls under a router mount path, on a path-segment
+ * boundary. Prevents a mount at /admin from matching an unrelated /administrators
+ * route (a false negative that would wrongly mark it protected).
+ */
+export function pathUnderMount(routePath: string, mountPath: string): boolean {
+  const mp = mountPath.replace(/\/+$/, '')
+  if (mp === '' || mp === '/') return true
+  return routePath === mp || routePath.startsWith(mp + '/')
 }
 
 function computeSeverity(deltaType: DeltaType, method: string): Severity {
@@ -106,14 +117,14 @@ export function routeKey(r: Route): string {
   return `${r.method}:${r.path}:${relative}`
 }
 
-function effectiveMiddlewares(
+export function effectiveMiddlewares(
   route: Route,
   mounts: RouterMount[]
 ): string[] {
-  // routes have full paths via resolveFullPaths,
-  // mounts can be matched by path prefix rather than filename heuristic
+  // routes have full paths via resolveFullPaths, so mounts can be matched by
+  // path prefix (boundary-aware) rather than the filename heuristic
   const routerMw = mounts
-    .filter(m => route.path.startsWith(m.path))
+    .filter(m => pathUnderMount(route.path, m.path))
     .flatMap(m => m.middlewares)
     .map(canonicalizeMiddleware)
 
@@ -213,10 +224,13 @@ function detectNewUnprotectedRoutes(
   ignorePaths: string[]
 ): Finding[] {
   const findings: Finding[] = []
-  const beforeMap = new Map(before.map(r => [routeKey(r), r]))
+  // Match on method:path (file-agnostic) so a route moved between files is not
+  // mistaken for a brand-new route, which would be a false-positive CRITICAL.
+  const methodPath = (r: Route) => `${r.method}:${r.path}`
+  const beforeKeys = new Set(before.map(methodPath))
 
   for (const afterRoute of after) {
-    if (beforeMap.has(routeKey(afterRoute))) continue
+    if (beforeKeys.has(methodPath(afterRoute))) continue
     if (afterRoute.method === 'use') continue
     if (ignorePaths.some(p => afterRoute.path.startsWith(p))) continue
 
@@ -287,7 +301,7 @@ function detectRouterAuthRemoval(
     // would be a false positive. If every child route retains auth, the mount
     // guard was redundant and this is not a regression: suppress entirely.
     const exposed = afterRoutes.filter(r => {
-      const underMount = r.path.startsWith(afterMount.path) ||
+      const underMount = pathUnderMount(r.path, afterMount.path) ||
         r.file.includes(afterMount.routerName)
       if (!underMount) return false
       const beforeEff = effectiveMiddlewares(r, beforeMounts)

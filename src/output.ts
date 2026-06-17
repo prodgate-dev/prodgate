@@ -9,6 +9,7 @@
  */
 
 import { DiffResult, Finding, canonicalizeMiddleware } from './diff'
+import { ScanResult, ScannedRoute } from './scan'
 
 function formatAuthChain(middlewares: string[]): string {
   if (middlewares.length === 0) return '(none)'
@@ -213,6 +214,131 @@ export function formatGithub(result: DiffResult): string {
         lines.push(`- Protected siblings: ${f.siblingContext.map(s => `\`${s.method.toUpperCase()} ${s.path}\``).join(', ')}`)
       }
     }
+  }
+
+  return lines.join('\n')
+}
+
+// ─── scan output ───────────────────────────────────────────────────────────
+
+function routeLine(r: ScannedRoute): string {
+  const method = r.method.toUpperCase().padEnd(6)
+  const path = r.path.padEnd(28)
+  const loc = formatFilePath(r.file, r.line)
+  return `  ${method} ${path} ${loc}`
+}
+
+function scanSummaryLine(result: ScanResult): string {
+  const s = result.stats
+  const parts = [`${s.protected} protected`]
+  if (s.unprotectedMutations > 0) parts.push(`${s.unprotectedMutations} unprotected mutations`)
+  if (s.unprotectedReads > 0) parts.push(`${s.unprotectedReads} unprotected reads`)
+  if (s.uncertain > 0) parts.push(`${s.uncertain} to verify`)
+  if (s.publicByConvention > 0) parts.push(`${s.publicByConvention} public by convention`)
+  return `Summary: ${s.total} routes. ${parts.join(', ')}`
+}
+
+export function formatScan(result: ScanResult): string {
+  const lines: string[] = []
+  const bar = '─'.repeat(50)
+  const s = result.stats
+
+  lines.push(``)
+  lines.push(`Prodgate Access Control Report`)
+  lines.push(bar)
+  lines.push(`Routes scanned: ${s.total}`)
+
+  const mutations = result.routes.filter(r => r.state === 'unprotected' && r.isMutation && !r.likelyPublic)
+  const reads = result.routes.filter(r => r.state === 'unprotected' && !r.isMutation && !r.likelyPublic)
+  const uncertain = result.routes.filter(r => r.state === 'uncertain')
+  const publicRoutes = result.routes.filter(r => r.state === 'unprotected' && r.likelyPublic)
+
+  // Lead with the unambiguous, dangerous signal: unprotected mutations.
+  if (mutations.length > 0) {
+    lines.push(``)
+    lines.push(`[CRITICAL] ${mutations.length} mutation route${mutations.length > 1 ? 's have' : ' has'} no auth`)
+    lines.push(``)
+    for (const r of mutations) lines.push(routeLine(r))
+  }
+
+  if (reads.length > 0) {
+    lines.push(``)
+    lines.push(`[WARNING] ${reads.length} read route${reads.length > 1 ? 's have' : ' has'} no auth`)
+    lines.push(``)
+    for (const r of reads) lines.push(routeLine(r))
+  }
+
+  if (uncertain.length > 0) {
+    lines.push(``)
+    lines.push(`[VERIFY] ${uncertain.length} route${uncertain.length > 1 ? 's use' : ' uses'} middleware Prodgate could not classify as auth`)
+    lines.push(`(could be a custom guard; confirm these are intentional)`)
+    lines.push(``)
+    for (const r of uncertain) {
+      lines.push(`${routeLine(r)}   (${r.unrecognized.join(', ')})`)
+    }
+  }
+
+  if (publicRoutes.length > 0) {
+    lines.push(``)
+    lines.push(`[INFO] ${publicRoutes.length} route${publicRoutes.length > 1 ? 's look' : ' looks'} public by convention (login, health, webhooks)`)
+    lines.push(``)
+    for (const r of publicRoutes) lines.push(routeLine(r))
+  }
+
+  if (mutations.length === 0 && reads.length === 0 && uncertain.length === 0) {
+    lines.push(``)
+    const extra = publicRoutes.length > 0 ? ` (${publicRoutes.length} public by convention)` : ''
+    lines.push(`No unprotected routes need review.${extra}`)
+  }
+
+  lines.push(``)
+  lines.push(bar)
+  lines.push(scanSummaryLine(result))
+  lines.push(``)
+  return lines.join('\n')
+}
+
+export function formatScanGithub(result: ScanResult): string {
+  const lines: string[] = []
+  const s = result.stats
+
+  lines.push(`## Prodgate Access Control Scan`)
+  lines.push(``)
+  lines.push(`**${s.total} routes scanned.** ${scanSummaryLine(result).replace('Summary: ', '').replace(`${s.total} routes. `, '')}`)
+
+  const mutations = result.routes.filter(r => r.state === 'unprotected' && r.isMutation && !r.likelyPublic)
+  const reads = result.routes.filter(r => r.state === 'unprotected' && !r.isMutation && !r.likelyPublic)
+  const uncertain = result.routes.filter(r => r.state === 'uncertain')
+
+  if (mutations.length > 0) {
+    lines.push(``)
+    lines.push(`### Unprotected mutation routes (${mutations.length})`)
+    for (const r of mutations) {
+      lines.push(`- \`${r.method.toUpperCase()} ${r.path}\`: \`${formatFilePath(r.file, r.line)}\``)
+    }
+  }
+
+  if (reads.length > 0) {
+    lines.push(``)
+    lines.push(`### Unprotected read routes (${reads.length})`)
+    for (const r of reads) {
+      lines.push(`- \`${r.method.toUpperCase()} ${r.path}\`: \`${formatFilePath(r.file, r.line)}\``)
+    }
+  }
+
+  if (uncertain.length > 0) {
+    lines.push(``)
+    lines.push(`### To verify (${uncertain.length})`)
+    lines.push(`Routes with middleware Prodgate could not classify as auth. Confirm these are intentional guards.`)
+    for (const r of uncertain) {
+      lines.push(`- \`${r.method.toUpperCase()} ${r.path}\`: \`${formatFilePath(r.file, r.line)}\` (\`${r.unrecognized.join(', ')}\`)`)
+    }
+  }
+
+  if (mutations.length === 0 && reads.length === 0 && uncertain.length === 0) {
+    lines.push(``)
+    const extra = s.publicByConvention > 0 ? ` (${s.publicByConvention} public by convention)` : ''
+    lines.push(`No unprotected routes need review.${extra}`)
   }
 
   return lines.join('\n')

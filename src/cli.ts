@@ -19,7 +19,8 @@ import { Command } from 'commander'
 import * as fs from 'fs'
 import { scanRepo } from './extract'
 import { diffRoutes } from './diff'
-import { formatHuman, formatGithub } from './output'
+import { scanRoutes } from './scan'
+import { formatHuman, formatGithub, formatScan, formatScanGithub } from './output'
 
 const program = new Command()
 
@@ -74,6 +75,39 @@ program
       (options.strict && result.stats.warningCount > 0)
 
     if (shouldFail) {
+      process.exit(1)
+    }
+  })
+
+program
+  .command('scan')
+  .description('Report the current access-control state of a single codebase')
+  .argument('<path>', 'Path to the repo to scan')
+  .option('--json', 'Output raw JSON')
+  .option('--github', 'Output GitHub-flavored markdown')
+  .option('--output <file>', 'Write output to a file')
+  .option('--strict', 'Exit non-zero if any mutation route has no auth')
+  .action(async (path, options) => {
+    const { routes, mounts } = await scanRepo(path)
+    const result = scanRoutes(routes, mounts)
+
+    let output: string
+    if (options.json) {
+      output = JSON.stringify(result, null, 2)
+    } else if (options.github) {
+      output = formatScanGithub(result)
+    } else {
+      output = formatScan(result)
+    }
+
+    if (options.output) {
+      fs.writeFileSync(options.output, output)
+    } else {
+      console.log(output)
+    }
+
+    // scan is informational by default; only --strict makes it a gate.
+    if (options.strict && result.stats.unprotectedMutations > 0) {
       process.exit(1)
     }
   })

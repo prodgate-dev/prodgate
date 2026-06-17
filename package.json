@@ -1,6 +1,6 @@
 {
   "name": "prodgate",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "description": "Access control regression detection for Express APIs",
   "license": "MIT",
   "main": "dist/cli.js",
@@ -22,7 +22,7 @@
     "build": "tsc",
     "prepublishOnly": "npm run build",
     "dev": "ts-node src/cli.ts",
-    "test": "ts-node test/case2.ts && ts-node test/case6.ts"
+    "test": "ts-node test/case2.ts && ts-node test/case6.ts && ts-node test/case_scan.ts"
   },
   "keywords": [
     "security",
