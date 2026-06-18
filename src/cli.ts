@@ -4,59 +4,70 @@
  *
  * CLI entry point for prodgate.
  *
- * Commands:
- *   prodgate check --before <path> --after <path>
+ *   prodgate check <plan.json>
  *
- * Flags:
- *   --json           Output raw JSON
- *   --github         Output GitHub markdown for PR comments
- *   --output <file>  Write output to a file
- *   --strict         Fail CI on warnings as well as criticals
+ * Reads a Terraform/OpenTofu plan in JSON form (`terraform show -json plan.tfplan`)
+ * and blocks destructive or dangerous changes to production. Prodgate never runs
+ * terraform and never needs cloud credentials: it only reads the plan file.
+ *
+ * Exit codes: 0 pass, 1 fail (gate triggered), 2 usage/plan error.
  */
-
 
 import { Command } from 'commander'
 import * as fs from 'fs'
-import { scanRepo } from './extract'
-import { diffRoutes } from './diff'
-import { scanRoutes } from './scan'
-import { formatHuman, formatGithub, formatScan, formatScanGithub } from './output'
+import { parsePlan } from './plan'
+import { detectAgent, AgentMetadata } from './agent'
+import { classifyPlan, Config } from './classify'
+import { formatHuman, formatGithub } from './output'
 
 const program = new Command()
 
 program
   .name('prodgate')
-  .description('Access control regression detection for Express APIs')
+  .description('Block destructive infrastructure changes in CI before they ship')
   .version(require('../package.json').version)
 
 program
   .command('check')
-  .description('Check for access control regressions between two versions of a repo')
-  .requiredOption('--before <path>', 'Path to the base version of the repo')
-  .requiredOption('--after <path>', 'Path to the changed version of the repo')
+  .description('Check a Terraform/OpenTofu plan (JSON) for destructive or dangerous changes')
+  .argument('<plan>', 'Path to a `terraform show -json` plan file')
   .option('--json', 'Output raw JSON')
   .option('--github', 'Output GitHub-flavored markdown for PR comments')
   .option('--output <file>', 'Write output to a file')
-  .option('--strict', 'Fail CI on warnings as well as criticals')
-  .action(async (options) => {
-    const beforeResult = await scanRepo(options.before)
-    const afterResult = await scanRepo(options.after)
+  .option('--strict', 'Also fail on warnings')
+  .option('--approved', 'Treat the change as human-approved (gate passes; findings still reported)')
+  .option('--config <file>', 'Path to prodgate.config.json')
+  .option('--pr-author <author>', 'PR author login (for agent detection)')
+  .option('--branch <branch>', 'Head branch name (for agent detection)')
+  .option('--commits-file <file>', 'File of commit messages (for agent detection)')
+  .option('--pr-body-file <file>', 'File containing the PR body (for agent detection)')
+  .action((planPath, options) => {
+    if (!fs.existsSync(planPath)) {
+      console.error(`Plan file not found: ${planPath}`)
+      process.exit(2)
+    }
 
-    const ignorePaths = [
-      ...(beforeResult.config.ignore ?? []),
-      ...(afterResult.config.ignore ?? [])
-    ]
+    let changes
+    try {
+      changes = parsePlan(fs.readFileSync(planPath, 'utf8'))
+    } catch (e) {
+      console.error((e as Error).message)
+      process.exit(2)
+    }
 
-    const result = diffRoutes(
-      beforeResult.routes,
-      afterResult.routes,
-      beforeResult.mounts,
-      afterResult.mounts,
-      ignorePaths
-    )
+    const meta: AgentMetadata = {
+      author: options.prAuthor ?? process.env.PRODGATE_PR_AUTHOR,
+      branch: options.branch ?? process.env.PRODGATE_BRANCH,
+      commitMessages: readMaybe(options.commitsFile) ?? process.env.PRODGATE_COMMITS,
+      prBody: readMaybe(options.prBodyFile) ?? process.env.PRODGATE_PR_BODY,
+    }
+    const agent = detectAgent(meta)
+    const approved = !!options.approved || process.env.PRODGATE_APPROVED === 'true'
+    const config = loadConfig(options.config)
+
+    const result = classifyPlan(changes, { agent, approved, strict: !!options.strict, config })
 
     let output: string
-
     if (options.json) {
       output = JSON.stringify(result, null, 2)
     } else if (options.github) {
@@ -71,45 +82,27 @@ program
       console.log(output)
     }
 
-    const shouldFail = result.verdict === 'fail' ||
-      (options.strict && result.stats.warningCount > 0)
-
-    if (shouldFail) {
-      process.exit(1)
-    }
-  })
-
-program
-  .command('scan')
-  .description('Report the current access-control state of a single codebase')
-  .argument('<path>', 'Path to the repo to scan')
-  .option('--json', 'Output raw JSON')
-  .option('--github', 'Output GitHub-flavored markdown')
-  .option('--output <file>', 'Write output to a file')
-  .option('--strict', 'Exit non-zero if any mutation route has no auth')
-  .action(async (path, options) => {
-    const { routes, mounts } = await scanRepo(path)
-    const result = scanRoutes(routes, mounts)
-
-    let output: string
-    if (options.json) {
-      output = JSON.stringify(result, null, 2)
-    } else if (options.github) {
-      output = formatScanGithub(result)
-    } else {
-      output = formatScan(result)
-    }
-
-    if (options.output) {
-      fs.writeFileSync(options.output, output)
-    } else {
-      console.log(output)
-    }
-
-    // scan is informational by default; only --strict makes it a gate.
-    if (options.strict && result.stats.unprotectedMutations > 0) {
+    if (result.verdict === 'fail') {
       process.exit(1)
     }
   })
 
 program.parse()
+
+function readMaybe(p?: string): string | undefined {
+  try {
+    return p ? fs.readFileSync(p, 'utf8') : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function loadConfig(p?: string): Config | undefined {
+  const target = p ?? 'prodgate.config.json'
+  try {
+    if (fs.existsSync(target)) return JSON.parse(fs.readFileSync(target, 'utf8'))
+  } catch {
+    /* ignore malformed config; zero-config is the default */
+  }
+  return undefined
+}

@@ -1,0 +1,17 @@
+{
+  "format_version": "1.2",
+  "resource_changes": [
+    {
+      "address": "aws_db_instance.main",
+      "mode": "managed",
+      "type": "aws_db_instance",
+      "name": "main",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["update"],
+        "before": { "identifier": "main-db", "publicly_accessible": false },
+        "after": { "identifier": "main-db", "publicly_accessible": true }
+      }
+    }
+  ]
+}

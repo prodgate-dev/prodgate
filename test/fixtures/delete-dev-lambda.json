@@ -1,0 +1,17 @@
+{
+  "format_version": "1.2",
+  "resource_changes": [
+    {
+      "address": "aws_lambda_function.worker",
+      "mode": "managed",
+      "type": "aws_lambda_function",
+      "name": "worker",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["delete"],
+        "before": { "function_name": "dev-worker", "tags": { "Environment": "dev" } },
+        "after": null
+      }
+    }
+  ]
+}

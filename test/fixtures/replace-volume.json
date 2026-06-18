@@ -1,0 +1,17 @@
+{
+  "format_version": "1.2",
+  "resource_changes": [
+    {
+      "address": "aws_ebs_volume.data",
+      "mode": "managed",
+      "type": "aws_ebs_volume",
+      "name": "data",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["delete", "create"],
+        "before": { "size": 100, "availability_zone": "us-east-1a", "tags": { "Name": "data-vol" } },
+        "after": { "size": 100, "availability_zone": "us-east-1b", "tags": { "Name": "data-vol" } }
+      }
+    }
+  ]
+}

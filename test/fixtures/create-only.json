@@ -1,0 +1,17 @@
+{
+  "format_version": "1.2",
+  "resource_changes": [
+    {
+      "address": "aws_s3_bucket.assets",
+      "mode": "managed",
+      "type": "aws_s3_bucket",
+      "name": "assets",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": { "bucket": "my-new-assets", "tags": { "Environment": "production" } }
+      }
+    }
+  ]
+}

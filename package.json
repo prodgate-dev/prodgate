@@ -1,7 +1,7 @@
 {
   "name": "prodgate",
-  "version": "0.4.0",
-  "description": "Access control regression detection for Express APIs",
+  "version": "1.0.0",
+  "description": "Block destructive infrastructure changes in CI before they ship",
   "license": "MIT",
   "main": "dist/cli.js",
   "bin": {
@@ -22,24 +22,22 @@
     "build": "tsc",
     "prepublishOnly": "npm run build",
     "dev": "ts-node src/cli.ts",
-    "test": "ts-node test/case2.ts && ts-node test/case6.ts && ts-node test/case_scan.ts"
+    "test": "ts-node test/case_plan.ts"
   },
   "keywords": [
-    "security",
-    "express",
-    "access-control",
-    "ci"
+    "terraform",
+    "opentofu",
+    "iac",
+    "devsecops",
+    "ci",
+    "terraform-plan",
+    "security"
   ],
   "author": "Prodgate Contributors",
   "dependencies": {
-    "@babel/parser": "^7.29.2",
-    "@babel/traverse": "^7.29.0",
-    "@babel/types": "^7.29.0",
-    "commander": "^14.0.0",
-    "glob": "^13.0.6"
+    "commander": "^14.0.0"
   },
   "devDependencies": {
-    "@types/babel__traverse": "^7.28.0",
     "@types/node": "^25.6.0",
     "ts-node": "^10.9.2",
     "typescript": "^6.0.3"
