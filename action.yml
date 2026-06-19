@@ -1,0 +1,73 @@
+name: 'Prodgate'
+description: 'Block destructive infrastructure changes in a Terraform plan before they ship'
+branding:
+  icon: 'shield'
+  color: 'red'
+
+inputs:
+  plan-json:
+    description: 'Path to a `terraform show -json` plan file'
+    required: true
+  strict:
+    description: 'Also fail on warnings'
+    required: false
+    default: 'false'
+  github-token:
+    description: 'Token used to post the PR comment'
+    required: false
+    default: ${{ github.token }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Collect agent-detection signals
+      shell: bash
+      run: |
+        # Best-effort recent commit messages (needs a non-shallow checkout to see
+        # co-author trailers; degrades gracefully otherwise).
+        git log --format='%B' -n 50 HEAD > "$RUNNER_TEMP/prodgate-commits.txt" 2>/dev/null || true
+
+    - name: Run Prodgate
+      id: prodgate
+      shell: bash
+      env:
+        PRODGATE_PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+        PRODGATE_BRANCH: ${{ github.head_ref }}
+        PRODGATE_PR_BODY: ${{ github.event.pull_request.body }}
+        PRODGATE_APPROVED: ${{ contains(github.event.pull_request.labels.*.name, 'prodgate-approved') }}
+      run: |
+        set +e
+        npx --yes prodgate@^1 check "${{ inputs.plan-json }}" \
+          ${{ inputs.strict == 'true' && '--strict' || '' }} \
+          --commits-file "$RUNNER_TEMP/prodgate-commits.txt" \
+          --github --output "$RUNNER_TEMP/prodgate.md"
+        echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+
+    - name: Post or update PR comment
+      if: ${{ github.event_name == 'pull_request' }}
+      uses: actions/github-script@v9
+      with:
+        github-token: ${{ inputs.github-token }}
+        script: |
+          const fs = require('fs')
+          let body
+          try { body = fs.readFileSync(process.env.RUNNER_TEMP + '/prodgate.md', 'utf8') } catch { return }
+          const marker = '<!-- prodgate -->'
+          body = `${marker}\n${body}`
+          const { owner, repo } = context.repo
+          const issue_number = context.issue.number
+          const comments = await github.rest.issues.listComments({ owner, repo, issue_number })
+          const existing = comments.data.find(c => c.body && c.body.includes(marker))
+          if (existing) {
+            await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body })
+          } else {
+            await github.rest.issues.createComment({ owner, repo, issue_number, body })
+          }
+
+    - name: Fail the check if the gate triggered
+      shell: bash
+      run: |
+        if [ "${{ steps.prodgate.outputs.exit_code }}" != "0" ]; then
+          echo "Prodgate blocked this plan. Add the 'prodgate-approved' label to override."
+          exit 1
+        fi

@@ -1,0 +1,25 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.9.0",
+  "resource_changes": [
+    {
+      "address": "aws_db_instance.main",
+      "mode": "managed",
+      "type": "aws_db_instance",
+      "name": "main",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["delete"],
+        "before": {
+          "identifier": "main-db",
+          "engine": "postgres",
+          "instance_class": "db.t3.large",
+          "allocated_storage": 100,
+          "deletion_protection": true,
+          "tags": { "Environment": "production", "Name": "main-db" }
+        },
+        "after": null
+      }
+    }
+  ]
+}

@@ -1,223 +1,131 @@
 # Prodgate
 
-Access control regression detection for Express APIs.
+Block destructive infrastructure changes in CI before they ship.
 
-Prodgate diffs the middleware chain of your Express backend across two versions of a codebase and produces a deterministic pass/fail verdict.
+Prodgate reads a Terraform/OpenTofu plan and fails the build when a change would irreversibly destroy production data or expose it, especially when an AI agent generated the change. It is a CI gate, not a scanner: it reasons about the *change*, not the static config.
 
-## Installation
+It works out of the box with no rules to write, and it reads the plan as a file: it never runs Terraform and never needs your cloud credentials.
+
+## Why
+
+A common, dangerous PR drops a production database, replaces a volume, disables deletion protection, or opens a security group to the world. In a diff it can look routine, and it shows up increasingly often in AI-generated changes. Prodgate turns that into a failed check with a recorded human override.
+
+## Usage (GitHub Actions)
+
+Two steps: your pipeline already produces a plan; Prodgate reads it.
+
+```yaml
+name: Prodgate
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  prodgate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0   # lets Prodgate see commit co-author trailers for agent detection
+
+      - uses: hashicorp/setup-terraform@v3
+
+      # Your existing plan, with your credentials. Prodgate never sees them.
+      - name: Terraform plan
+        run: |
+          terraform init -input=false
+          terraform plan -out=plan.tfplan -input=false
+          terraform show -json plan.tfplan > plan.json
+
+      - name: Prodgate
+        uses: prodgate-dev/prodgate@v1
+        with:
+          plan-json: plan.json
+```
+
+On a destructive or dangerous change, Prodgate fails the check and posts a PR comment. A human approves by adding the **`prodgate-approved`** label (GitHub records who and when); re-run the check and the gate passes.
+
+## Usage (CLI)
 
 ```bash
 npm install -g prodgate
+terraform show -json plan.tfplan > plan.json
+prodgate check plan.json
 ```
 
-## Usage
-
-Prodgate has two commands:
-
-- `check` diffs two versions of a repo and fails CI when a PR removes a guard.
-- `scan` reports the current access-control state of a single codebase.
-
-```bash
-prodgate check --before <path> --after <path>
-```
-
-### Example output
+Example output:
 
 ```
-Prodgate Access Control Report
+Prodgate Infrastructure Change Report
 ──────────────────────────────────────────────────
-Routes scanned: 28
-[CRITICAL] Access control regression: POST /impersonate/:userId
-  File:   src/api/admin.ts:12
-  Before: requireSuperuser
-  After:  (none)
-  Impact: POST /impersonate/:userId no longer enforces any access control. This endpoint is now publicly accessible.
+Resources scanned: 1
+
+[CRITICAL] 1 destructive or dangerous change
+
+  DELETE   aws_db_instance.main               deletes a stateful resource (data loss)
+
 ──────────────────────────────────────────────────
-Authorization changes detected:
-  CRITICAL
-    POST /impersonate/:userId   requireSuperuser -> (none)
 Verdict: FAIL
 ```
 
-## Scanning a single codebase
-
-`check` only speaks up when a PR removes a guard. To see the current exposure of a repo, without a diff, use `scan`:
-
-```bash
-prodgate scan <path>
-```
-
-It classifies every route by its effective auth (mount-level plus route-level guards):
-
-```
-Prodgate Access Control Report
-──────────────────────────────────────────────────
-Routes scanned: 12
-
-[CRITICAL] 1 mutation route has no auth
-
-  DELETE /items/:id                   src/routes/items.ts:4
-
-[VERIFY] 1 route uses middleware Prodgate could not classify as auth
-(could be a custom guard; confirm these are intentional)
-
-  GET    /items/secret                src/routes/items.ts:6   (ensureLoggedIn)
-
-[INFO] 1 route looks public by convention (login, health, webhooks)
-
-  POST   /auth/login                  src/routes/auth.ts:6
-
-──────────────────────────────────────────────────
-Summary: 12 routes. 9 protected, 1 unprotected mutations, 1 to verify, 1 public by convention
-```
-
-`scan` leads with unprotected **mutation** routes (the dangerous ones). Routes guarded by middleware Prodgate cannot name-match (a custom `checkUser`, an inline function) are reported as **to verify** rather than unprotected, so it never falsely claims a guarded route is open. Login, health, and webhook style routes are surfaced as **public by convention** instead of alarmed on. `scan` is informational and exits 0 by default; pass `--strict` to fail when a mutation route has no auth.
-
-## What Prodgate detects
+## What Prodgate flags
 
 **CRITICAL (fails CI):**
-- Route lost auth middleware
-- Router mount lost auth middleware (all child routes affected)
-- New unprotected POST, PUT, DELETE, or PATCH route
-- Unprotected route shadows a protected route on the same path
+- Deleting or replacing a stateful resource (databases, volumes, buckets, DNS zones, KMS keys, secrets, log groups). Data loss is data loss, in any environment.
+- Deleting or replacing a production-tagged resource.
+- Disabling deletion protection.
+- Making a database publicly accessible.
+- Weakening an S3 public access block.
+- Opening a sensitive port (SSH, RDP, database ports) to `0.0.0.0/0`.
 
 **WARNING (informational by default, fails CI with `--strict`):**
-- New unprotected GET route
-- Inconsistent protection across sibling routes
+- Deleting or replacing a non-stateful, non-production resource (so it does not cry wolf on dev teardowns).
+- Opening a non-sensitive port to the world.
+- Granting a wildcard (`*`) IAM action or resource.
 
-## Flags
+## AI-agent detection
+
+When a flagged change looks agent-generated, Prodgate says so and shows the signal it matched (a `Co-Authored-By` trailer from Claude Code / Cursor, a bot author, an agent branch prefix). It is a transparent flag, never a black box.
+
+## Approval (recorded sign-off)
+
+Destructive changes require a human to approve them. In the Action, that is the `prodgate-approved` label; GitHub records who applied it and when. The finding is still reported; only the verdict flips to pass.
+
+## Configuration
+
+Zero-config by default. For overrides, add `prodgate.config.json`:
+
+```json
+{
+  "ignore": ["module.sandbox.*"],
+  "allowDestroy": ["aws_db_instance.scratch"]
+}
+```
 
 | Flag | Description |
 |------|-------------|
 | `--json` | Output raw JSON |
 | `--github` | Output GitHub markdown for PR comments |
 | `--output <file>` | Write output to a file |
-| `--strict` | Fail CI on warnings as well as criticals |
+| `--strict` | Also fail on warnings |
+| `--approved` | Treat the change as human-approved |
+| `--config <file>` | Path to `prodgate.config.json` |
 
-## CI Integration
+## Trust boundary
 
-Add this to your repository at `.github/workflows/prodgate.yml`:
-
-```yaml
-name: Prodgate Access Control Check
-
-on:
-  pull_request:
-    branches: [main, master]
-
-jobs:
-  prodgate:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: write
-      issues: write
-
-    steps:
-      - name: Checkout PR branch
-        uses: actions/checkout@v6
-        with:
-          path: after
-
-      - name: Checkout base branch
-        uses: actions/checkout@v6
-        with:
-          ref: ${{ github.base_ref }}
-          path: before
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: '22'
-
-      - name: Install prodgate
-        run: npm install -g prodgate
-
-      - name: Run prodgate check
-        run: prodgate check --before ./before --after ./after --json --output prodgate-result.json
-        continue-on-error: true
-
-      - name: Post PR comment
-        if: always()
-        continue-on-error: true
-        uses: actions/github-script@v9
-        with:
-          script: |
-            try {
-              const fs = require('fs')
-              if (!fs.existsSync('prodgate-result.json')) return
-              const result = JSON.parse(fs.readFileSync('prodgate-result.json', 'utf8'))
-              const verdict = result.verdict === 'pass' ? 'PASS' : 'FAIL'
-              let body = `## Prodgate Access Control Check: ${verdict}\n\n`
-              body += `**${result.stats.routesScanned} routes scanned**\n\n`
-              const criticals = result.findings.filter(f => f.severity === 'CRITICAL')
-              const warnings = result.findings.filter(f => f.severity === 'WARNING')
-              if (criticals.length === 0 && warnings.length === 0) {
-                body += `No access control issues detected.\n`
-              }
-              if (criticals.length > 0) {
-                body += `### Critical Issues\n\n`
-                for (const f of criticals) {
-                  body += `**\`${f.route.method.toUpperCase()} ${f.route.path}\`**: ${f.summary}\n`
-                  body += `- Before: \`${f.auth.beforeEffective.join(' -> ') || '(none)'}\`\n`
-                  body += `- After: \`${f.auth.afterEffective.join(' -> ') || '(none)'}\`\n`
-                  if (f.affectedRoutes && f.affectedRoutes.length > 0) {
-                    body += `- Affected routes: ${f.affectedRoutes.join(', ')}\n`
-                  }
-                  body += `\n`
-                }
-              }
-              if (warnings.length > 0) {
-                body += `### Warnings\n\n`
-                for (const f of warnings) {
-                  body += `- \`${f.route.method.toUpperCase()} ${f.route.path}\`: ${f.summary}\n`
-                }
-              }
-              await github.rest.issues.createComment({
-                issue_number: context.issue.number,
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                body
-              })
-            } catch (e) {
-              console.log('Could not post PR comment:', e.message)
-            }
-
-      - name: Fail if critical issues detected
-        run: |
-          node -e "
-            const fs = require('fs');
-            const result = JSON.parse(fs.readFileSync('prodgate-result.json', 'utf8'));
-            if (result.verdict === 'fail') {
-              console.log('Prodgate detected critical access control regressions.');
-              process.exit(1);
-            }
-            console.log('Prodgate check passed.');
-          "
-```
-
-## Zero config
-
-Prodgate auto-detects Express route files by scanning your repository. No configuration required.
-
-If auto-detection doesn't work for your project structure, create a `prodgate.config.json` at the repo root:
-
-```json
-{
-  "routesDir": "src/routes",
-  "authPatterns": ["requireAuth", "requireAdmin"],
-  "ignore": ["/health", "/metrics"]
-}
-```
+Prodgate reads a plan JSON file. It does not run Terraform, does not read your state, and never needs cloud credentials. It cannot do anything to your account; it can only read the plan.
 
 ## Limitations
 
-- Express only. NestJS, FastAPI, and Rails support is planned.
-- Static analysis only. It does not execute code or make network requests.
-- Middleware identity is based on name and structure. Renamed or wrapped middleware may not be detected correctly.
-- Dynamic route registration patterns may be missed.
-- Router-to-route matching uses naming conventions. Unusual naming may require `routesDir` configuration.
+- Terraform and OpenTofu only (Pulumi, CDK, and others are planned).
+- AWS-first resource coverage. Other providers are added by extending the knowledge base.
+- It flags changes that make things worse (a regression), not the mere existence of a public resource created from scratch.
+- Static analysis of the plan; it does not execute anything.
 
 ## Demo
 
-See [prodgate-demo](https://github.com/prodgate-dev/prodgate-demo) for two worked examples with real CLI output.
+See `examples/agent-deletes-prod` for a worked plan where an AI agent deletes the production database and Prodgate blocks it.
