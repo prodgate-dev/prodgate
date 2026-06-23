@@ -14,14 +14,20 @@ export function isStateful(rc: ResourceChange): boolean {
 }
 
 const PROD_TAG_KEYS = ['environment', 'env', 'stage', 'tier']
-const PROD_VALUE = /^(prod|production|prd|live)$/i
+// A production tag value: "prod"/"production"/"prd"/"live", optionally followed
+// by a separator-delimited suffix (e.g. "prod-us-east-1", "production_eu").
+// Anchored at the start so "nonprod" / "prodigy" / "products" never match.
+const PROD_VALUE = /^(prod|production|prd|live)([_.\-].*)?$/i
 const PROD_NAME = /(^|[_\-./])prod(uction)?([_\-./0-9]|$)/i
+// Veto: "non-prod" / "pre-prod" (and separator-free "nonprod"/"preprod") are
+// non-production environments and must never be treated as prod.
+const NONPROD_NAME = /(^|[_\-./])(non|pre)[_\-.]?prod/i
 
 export function isProduction(rc: ResourceChange): boolean {
   for (const [k, v] of Object.entries(rc.tags)) {
     if (PROD_TAG_KEYS.includes(k.toLowerCase()) && PROD_VALUE.test(v)) return true
   }
-  return PROD_NAME.test(rc.address)
+  return PROD_NAME.test(rc.address) && !NONPROD_NAME.test(rc.address)
 }
 
 export function matchDangerousMutations(rc: ResourceChange): MutationMatch[] {

@@ -1,0 +1,32 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.9.5",
+  "resource_changes": [
+    {
+      "address": "module.non-prod.aws_instance.web[0]",
+      "module_address": "module.non-prod",
+      "mode": "managed",
+      "type": "aws_instance",
+      "name": "web",
+      "index": 0,
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["delete"],
+        "before": { "instance_type": "t3.micro", "tags_all": { "Environment": "non-prod" } },
+        "after": null
+      }
+    },
+    {
+      "address": "aws_lambda_function.pre-prod-worker",
+      "mode": "managed",
+      "type": "aws_lambda_function",
+      "name": "pre-prod-worker",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["delete"],
+        "before": { "function_name": "pre-prod-worker" },
+        "after": null
+      }
+    }
+  ]
+}

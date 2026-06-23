@@ -1,0 +1,19 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.9.5",
+  "resource_changes": [
+    {
+      "address": "aws_db_instance.replicas[\"us-east-1\"]",
+      "mode": "managed",
+      "type": "aws_db_instance",
+      "name": "replicas",
+      "index": "us-east-1",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["delete"],
+        "before": { "identifier": "replica-use1", "tags": {}, "tags_all": { "Environment": "prod-us-east-1", "Team": "data" } },
+        "after": null
+      }
+    }
+  ]
+}

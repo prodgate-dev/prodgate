@@ -95,6 +95,45 @@ console.log('─'.repeat(50))
   check('approved: pass, finding still reported', r.verdict === 'pass' && r.approved && r.findings.length === 1)
 }
 
+// ── real-plan shapes (hardening) ──────────────────────────────────────────
+
+// Module-nested address still resolves type/statefulness -> CRITICAL
+{
+  const r = classifyPlan(fixture('module-nested-delete.json'))
+  check('module-nested-delete: fail, stateful in a module', r.verdict === 'fail' && r.findings[0].type === 'destructive_stateful' && r.findings[0].resource.address.startsWith('module.'))
+}
+
+// for_each-indexed address + prod-region tag in tags_all -> CRITICAL
+{
+  const r = classifyPlan(fixture('foreach-replica-delete.json'))
+  check('foreach-replica-delete: fail, indexed stateful', r.verdict === 'fail' && r.stats.criticalCount === 1)
+}
+
+// non-prod / pre-prod teardown must NOT cry wolf -> WARNING, pass
+{
+  const r = classifyPlan(fixture('nonprod-teardown.json'))
+  check('nonprod-teardown: pass, no false prod block', r.verdict === 'pass' && r.stats.criticalCount === 0 && r.findings.every(f => f.type === 'destructive_other'))
+}
+
+// Region-suffixed prod tag on a non-stateful resource -> CRITICAL production
+{
+  const r = classifyPlan(fixture('prod-region-tag-delete.json'))
+  check('prod-region-tag-delete: fail, production recognized', r.verdict === 'fail' && r.findings[0].type === 'destructive_production')
+}
+
+// Computed/unknown after values must not crash or false-flag -> pass
+{
+  const r = classifyPlan(fixture('computed-unknown-update.json'))
+  check('computed-unknown-update: pass, no false mutation flag', r.verdict === 'pass' && r.findings.length === 0)
+}
+
+// Large mixed plan: data source skipped, no-ops ignored, prod replace caught,
+// dev teardown stays a warning
+{
+  const r = classifyPlan(fixture('large-mixed-plan.json'))
+  check('large-mixed-plan: 1 critical (prod cache replace), 1 warning (dev lambda)', r.verdict === 'fail' && r.stats.criticalCount === 1 && r.stats.warningCount === 1 && r.findings.some(f => f.type === 'destructive_stateful' && f.action === 'replace'))
+}
+
 console.log('\n' + '─'.repeat(50))
 if (failures === 0) {
   console.log('All plan tests passed')

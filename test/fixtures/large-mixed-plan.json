@@ -1,0 +1,64 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.9.5",
+  "resource_changes": [
+    {
+      "address": "data.aws_ami.ubuntu",
+      "mode": "data",
+      "type": "aws_ami",
+      "name": "ubuntu",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": { "actions": ["read"], "before": null, "after": null }
+    },
+    {
+      "address": "aws_cloudwatch_metric_alarm.cpu",
+      "mode": "managed",
+      "type": "aws_cloudwatch_metric_alarm",
+      "name": "cpu",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": { "actions": ["no-op"], "before": {}, "after": {} }
+    },
+    {
+      "address": "aws_subnet.new",
+      "mode": "managed",
+      "type": "aws_subnet",
+      "name": "new",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": { "actions": ["create"], "before": null, "after": { "cidr_block": "10.0.5.0/24" } }
+    },
+    {
+      "address": "aws_iam_role.task",
+      "mode": "managed",
+      "type": "aws_iam_role",
+      "name": "task",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": { "actions": ["update"], "before": { "max_session_duration": 3600 }, "after": { "max_session_duration": 7200 } }
+    },
+    {
+      "address": "module.cache.aws_elasticache_replication_group.sessions",
+      "module_address": "module.cache",
+      "mode": "managed",
+      "type": "aws_elasticache_replication_group",
+      "name": "sessions",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["delete", "create"],
+        "before": { "replication_group_id": "sessions", "tags_all": { "Environment": "production" } },
+        "after": { "replication_group_id": "sessions-v2" }
+      }
+    },
+    {
+      "address": "aws_lambda_function.dev_worker[2]",
+      "mode": "managed",
+      "type": "aws_lambda_function",
+      "name": "dev_worker",
+      "index": 2,
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["delete"],
+        "before": { "function_name": "dev-worker-2", "tags_all": { "Environment": "dev" } },
+        "after": null
+      }
+    }
+  ]
+}
