@@ -49,7 +49,11 @@ function extractTags(before: any, after: any): Record<string, string> {
 export function parsePlan(json: string): ResourceChange[] {
   let doc: any
   try {
-    doc = JSON.parse(json)
+    // Strip a leading byte-order mark. Windows tooling (PowerShell redirects,
+    // some editors) prepends a BOM to `terraform show -json` output, which
+    // otherwise makes JSON.parse throw on an otherwise valid plan.
+    const text = json.charCodeAt(0) === 0xfeff ? json.slice(1) : json
+    doc = JSON.parse(text)
   } catch (e) {
     throw new Error('Could not parse plan JSON: ' + (e as Error).message)
   }

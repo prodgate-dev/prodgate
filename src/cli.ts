@@ -49,7 +49,7 @@ program
 
     let changes
     try {
-      changes = parsePlan(fs.readFileSync(planPath, 'utf8'))
+      changes = parsePlan(readTextFile(planPath))
     } catch (e) {
       console.error((e as Error).message)
       process.exit(2)
@@ -89,9 +89,25 @@ program
 
 program.parse()
 
+// Read a text file, honoring a UTF-16 byte-order mark. PowerShell's `>` and
+// `Out-File` emit UTF-16 LE (5.1) or UTF-8 with a BOM, so a plan piped from
+// `terraform show -json > plan.json` on Windows is commonly not plain UTF-8.
+function readTextFile(p: string): string {
+  const buf = fs.readFileSync(p)
+  if (buf.length >= 2 && buf[0] === 0xff && buf[1] === 0xfe) return buf.toString('utf16le')
+  if (buf.length >= 2 && buf[0] === 0xfe && buf[1] === 0xff) {
+    const swapped = Buffer.from(buf) // utf16be -> swap to utf16le for Node
+    for (let i = 0; i + 1 < swapped.length; i += 2) {
+      const t = swapped[i]; swapped[i] = swapped[i + 1]; swapped[i + 1] = t
+    }
+    return swapped.toString('utf16le')
+  }
+  return buf.toString('utf8') // a UTF-8 BOM, if present, is stripped in parsePlan
+}
+
 function readMaybe(p?: string): string | undefined {
   try {
-    return p ? fs.readFileSync(p, 'utf8') : undefined
+    return p ? readTextFile(p) : undefined
   } catch {
     return undefined
   }

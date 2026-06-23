@@ -134,6 +134,14 @@ console.log('─'.repeat(50))
   check('large-mixed-plan: 1 critical (prod cache replace), 1 warning (dev lambda)', r.verdict === 'fail' && r.stats.criticalCount === 1 && r.stats.warningCount === 1 && r.findings.some(f => f.type === 'destructive_stateful' && f.action === 'replace'))
 }
 
+// A leading BOM (Windows / PowerShell `terraform show -json >` output) must not
+// break parsing — it surfaced as a hard parse failure on a real harvested plan.
+{
+  const withBom = '﻿' + fs.readFileSync(path.join(__dirname, 'fixtures', 'delete-db.json'), 'utf8')
+  const r = classifyPlan(parsePlan(withBom))
+  check('bom-prefixed plan: parses and still gates', r.verdict === 'fail' && r.stats.criticalCount === 1)
+}
+
 console.log('\n' + '─'.repeat(50))
 if (failures === 0) {
   console.log('All plan tests passed')
