@@ -33,7 +33,9 @@ export function isProduction(rc: ResourceChange): boolean {
 // An explicit, team-declared non-production environment. This is the OPPOSITE and
 // stronger question to isProduction: not "does this look non-prod?" but "did the
 // team declare it non-prod?". Absence of a tag is not non-prod; unknown fails closed.
-const NONPROD_VALUE = /^(dev|develop|development|test|testing|qa|uat|preview|sandbox|sbx|ephemeral|staging|stage)$/i
+// Mirrors PROD_VALUE's tolerance for a separator-delimited suffix, so a
+// region-scoped env tag like "dev-eu-west-1" or "staging_2" still downgrades.
+const NONPROD_VALUE = /^(dev|develop|development|test|testing|qa|uat|preview|sandbox|sbx|ephemeral|staging|stage)([_.\-].*)?$/i
 
 export function nonProductionTag(rc: ResourceChange): string | null {
   for (const [k, v] of Object.entries(rc.tags)) {

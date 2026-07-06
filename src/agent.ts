@@ -20,11 +20,10 @@ export type AgentInfo = { likelyAgent: boolean; signals: string[] }
 
 // Agent names as whole tokens only, so "devinsmith" or "moved the cursor" do not
 // match. Applied to structured fields (trailers, author, branch), never free prose.
+// This is deliberately about *AI* agents: a generic GitHub App like renovate[bot] or
+// dependabot[bot] is not matched, so it never gets the "AI-agent generated" banner.
+// Real AI bot logins (cursor[bot], devin-ai-integration[bot]) contain the name.
 const AGENT_RE = /\b(claude|cursor|copilot|devin|aider|codex|sweep|tabnine|ona)\b|\bgpt-?[0-9]?\b/i
-// GitHub App bots always carry a "[bot]" suffix; named agents are covered by AGENT_RE
-// (word-anchored), so this stays scoped to bot-suffix patterns and does not fire on a
-// human login that merely contains an agent substring.
-const BOT_LOGIN_RE = /\[bot\]$|-bot$|^bot-/i
 const BRANCH_RE = /^(cursor|claude|devin|aider|copilot|codex|sweep|bot|ai)[\/-]/i
 // A high-precision PR-body marker (the phrase tools stamp), not a bare agent name,
 // so ordinary prose mentioning an agent does not trip the flag.
@@ -44,8 +43,8 @@ export function detectAgent(meta: AgentMetadata): AgentInfo {
     }
   }
 
-  if (meta.author && (AGENT_RE.test(meta.author) || BOT_LOGIN_RE.test(meta.author))) {
-    signals.push('author looks like an agent or bot: ' + meta.author)
+  if (meta.author && AGENT_RE.test(meta.author)) {
+    signals.push('author is a known AI agent: ' + meta.author)
   }
   if (meta.branch && BRANCH_RE.test(meta.branch)) {
     signals.push('branch name signals an agent: ' + meta.branch)

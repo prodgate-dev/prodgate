@@ -41,8 +41,9 @@ runs:
       with:
         github-token: ${{ inputs.github-token }}
         script: |
-          // A new commit changes the plan, so any prior approval is stale. Remove the
-          // label; a human must re-approve the new plan. Binds approval to the plan.
+          // Best-effort cleanup: clear the stale label after a new commit so the PR
+          // reads correctly. Enforcement does not depend on this (the approval step
+          // fails closed on synchronize), so a fork PR's read-only-token 403 is fine.
           const { owner, repo } = context.repo
           try {
             await github.rest.issues.removeLabel({ owner, repo, issue_number: context.issue.number, name: 'prodgate-approved' })
@@ -57,8 +58,12 @@ runs:
       with:
         github-token: ${{ inputs.github-token }}
         script: |
-          // Read labels live from the API rather than the event payload, so adding
-          // the label and re-running passes the gate without a new commit.
+          // Enforcement lives here (a read + logic), not in the label-removal step
+          // above (a write that 403s on fork PRs). On a new commit the plan changed,
+          // so any prior approval is stale regardless of label state: fail closed.
+          if (context.payload.action === 'synchronize') { core.setOutput('approved', 'false'); return }
+          // Otherwise read labels live from the API rather than the event payload, so
+          // adding the label and re-running passes the gate without a new commit.
           const { owner, repo } = context.repo
           const { data } = await github.rest.issues.listLabelsOnIssue({ owner, repo, issue_number: context.issue.number })
           const approved = data.some(l => l.name === 'prodgate-approved')

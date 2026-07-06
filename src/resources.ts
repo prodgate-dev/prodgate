@@ -81,8 +81,9 @@ function isWorldOpen(ing: any): boolean {
 }
 function portRange(ing: any): { from: number; to: number } {
   // protocol "-1"/"all" means every protocol and every port in AWS, regardless of
-  // the from/to fields (which are commonly 0/0 in that case).
-  const proto = String(ing?.protocol ?? '').toLowerCase()
+  // the from/to fields (which are commonly 0/0 in that case). aws_vpc_security_group_*
+  // rules spell the field ip_protocol.
+  const proto = String(ing?.protocol ?? ing?.ip_protocol ?? '').toLowerCase()
   if (proto === '-1' || proto === 'all') return { from: 0, to: 65535 }
   const from = Number(ing?.from_port ?? 0)
   const to = Number(ing?.to_port ?? 65535)

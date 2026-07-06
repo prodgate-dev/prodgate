@@ -180,6 +180,12 @@ console.log('─'.repeat(50))
   check('sg-ipv6-ssh-world: fail, ipv6 world-open detected', r.verdict === 'fail' && r.findings.some(f => f.severity === 'CRITICAL'))
 }
 
+// aws_vpc_security_group_ingress_rule uses ip_protocol; "-1" is all ports -> CRITICAL
+{
+  const r = classifyPlan(fixture('sg-ip-protocol-all.json'))
+  check('sg-ip-protocol-all: fail, ip_protocol all-ports critical', r.verdict === 'fail' && r.findings.some(f => f.severity === 'CRITICAL'))
+}
+
 // ── ephemeral-environment severity ladder (review Tier 3.2) ────────────────
 
 // Declared-dev stateful teardown -> WARNING, pass (fails under --strict)
@@ -194,6 +200,12 @@ console.log('─'.repeat(50))
 {
   const r = classifyPlan(fixture('delete-staging-db.json'))
   check('delete-staging-db: warning, staging is non-prod', r.verdict === 'pass' && r.findings[0].type === 'destructive_stateful_nonprod')
+}
+
+// region-suffixed non-prod tag (dev-eu-west-1) still downgrades -> WARNING
+{
+  const r = classifyPlan(fixture('delete-dev-region-db.json'))
+  check('delete-dev-region-db: warning, suffixed non-prod tag', r.verdict === 'pass' && r.findings[0].type === 'destructive_stateful_nonprod')
 }
 
 // deletion_protection overrides the downgrade -> CRITICAL
@@ -222,6 +234,8 @@ console.log('─'.repeat(50))
   check('agent: bare agent word in PR body not flagged', detectAgent({ prBody: 'we should use codex here maybe' }).likelyAgent === false)
   check('agent: "cursor[bot]" author flagged', detectAgent({ author: 'cursor[bot]' }).likelyAgent === true)
   check('agent: PR-body generated marker flagged', detectAgent({ prBody: '🤖 Generated with Claude Code' }).likelyAgent === true)
+  check('agent: renovate[bot] not an AI agent', detectAgent({ author: 'renovate[bot]' }).likelyAgent === false)
+  check('agent: dependabot[bot] not an AI agent', detectAgent({ author: 'dependabot[bot]' }).likelyAgent === false)
 }
 
 // A leading BOM (Windows / PowerShell `terraform show -json >` output) must not
