@@ -134,6 +134,32 @@ console.log('─'.repeat(50))
   check('large-mixed-plan: 1 critical (prod cache replace), 1 warning (dev lambda)', r.verdict === 'fail' && r.stats.criticalCount === 1 && r.stats.warningCount === 1 && r.findings.some(f => f.type === 'destructive_stateful' && f.action === 'replace'))
 }
 
+// ── dangerous creates, not only updates ───────────────────────────────────
+
+// Creating a publicly accessible database -> CRITICAL
+{
+  const r = classifyPlan(fixture('create-public-db.json'))
+  check('create-public-db: fail, dangerous create', r.verdict === 'fail' && r.findings.some(f => f.type === 'dangerous_mutation' && f.action === 'create' && f.severity === 'CRITICAL'))
+}
+
+// Creating an SSH rule open to the world -> CRITICAL (sensitive port)
+{
+  const r = classifyPlan(fixture('create-ssh-open-world.json'))
+  check('create-ssh-open-world: fail, critical create', r.verdict === 'fail' && r.findings.some(f => f.type === 'dangerous_mutation' && f.severity === 'CRITICAL'))
+}
+
+// Creating a wildcard IAM policy -> WARNING (passes without --strict)
+{
+  const r = classifyPlan(fixture('create-wildcard-iam.json'))
+  check('create-wildcard-iam: warning, not critical', r.verdict === 'pass' && r.stats.warningCount === 1 && r.findings[0].type === 'dangerous_mutation')
+}
+
+// Creating a public web SG on 80/443 must NOT cry wolf -> WARNING, pass
+{
+  const r = classifyPlan(fixture('create-public-web-sg.json'))
+  check('create-public-web-sg: warning only, no false critical', r.verdict === 'pass' && r.stats.criticalCount === 0 && r.stats.warningCount === 1)
+}
+
 // A leading BOM (Windows / PowerShell `terraform show -json >` output) must not
 // break parsing — it surfaced as a hard parse failure on a real harvested plan.
 {

@@ -34,6 +34,9 @@
     "terraform-plan",
     "security"
   ],
+  "engines": {
+    "node": ">=20"
+  },
   "author": "Prodgate Contributors",
   "dependencies": {
     "commander": "^14.0.0"

@@ -19,10 +19,14 @@ name: Prodgate
 
 on:
   pull_request:
+    # `labeled`/`unlabeled` let the gate re-run when a human adds or removes the
+    # prodgate-approved label, without needing a new commit.
+    types: [opened, synchronize, reopened, labeled, unlabeled]
 
 permissions:
   contents: read
   pull-requests: write
+  issues: write
 
 jobs:
   prodgate:
@@ -119,11 +123,29 @@ Zero-config by default. For overrides, add `prodgate.config.json`:
 
 Prodgate reads a plan JSON file. It does not run Terraform, does not read your state, and never needs cloud credentials. It cannot do anything to your account; it can only read the plan.
 
+## Provider coverage
+
+| Surface | Coverage |
+|---------|----------|
+| Terraform / OpenTofu plan JSON | Supported |
+| AWS resources | Supported (stateful resources, public DB, S3 public access, security groups, IAM, deletion protection) |
+| GCP / Azure | Planned |
+| Pulumi / CDK / CloudFormation | Not supported |
+
+Coverage is a data table (`src/resources.ts`), so adding a resource type or a risk rule is an edit, not a rewrite.
+
+## How this compares
+
+Prodgate is not a policy platform, and it does not pretend OPA, Sentinel, Checkov, Atlantis, or Terraform Cloud do not exist. Those are broader and more configurable. Prodgate is narrower on purpose: no policy language, plan-first, and tuned for high-signal destructive or exposing changes in a PR.
+
+- Use OPA / Sentinel / Checkov if you want a full policy engine and are willing to write and maintain policy.
+- Use Prodgate if you want a five-minute guardrail that fails CI when a plan deletes a database or opens something to the world, with nothing to configure.
+
 ## Limitations
 
 - Terraform and OpenTofu only (Pulumi, CDK, and others are planned).
 - AWS-first resource coverage. Other providers are added by extending the knowledge base.
-- It flags changes that make things worse (a regression), not the mere existence of a public resource created from scratch.
+- It reasons about the change in the plan (delete, replace, create, update), not resources that are unchanged (no-op) in the plan.
 - Static analysis of the plan; it does not execute anything.
 
 ## Demo

@@ -29,7 +29,7 @@ export type PlanFinding = {
   severity: Severity
   type: FindingType
   resource: { address: string; type: string }
-  action: 'delete' | 'replace' | 'update'
+  action: 'delete' | 'replace' | 'update' | 'create'
   reason: string
   summary: string
   agentAuthored: boolean
@@ -46,6 +46,7 @@ export type ClassifyOptions = {
   approved?: boolean
   strict?: boolean
   config?: Config
+  planHash?: string
 }
 
 export type PlanResult = {
@@ -54,6 +55,7 @@ export type PlanResult = {
   approved: boolean
   strict: boolean
   agent: AgentInfo
+  planHash?: string
   stats: {
     resourcesScanned: number
     destructive: number
@@ -84,9 +86,12 @@ export function classifyPlan(changes: ResourceChange[], opts: ClassifyOptions = 
   for (const rc of changes) {
     if (matchesAny(rc.address, opts.config?.ignore)) continue
 
-    if (rc.changeKind === 'delete' || rc.changeKind === 'replace') {
+    const destructive = rc.changeKind === 'delete' || rc.changeKind === 'replace'
+
+    if (destructive) {
+      // An explicitly allowed destroy skips every check for this resource.
       if (matchesAny(rc.address, opts.config?.allowDestroy)) continue
-      const action = rc.changeKind
+      const action: 'delete' | 'replace' = rc.changeKind === 'delete' ? 'delete' : 'replace'
       const verb = action === 'delete' ? 'deletes' : 'replaces'
 
       if (isStateful(rc)) {
@@ -120,13 +125,19 @@ export function classifyPlan(changes: ResourceChange[], opts: ClassifyOptions = 
           agentAuthored: agent.likelyAgent,
         })
       }
-    } else if (rc.changeKind === 'update') {
+    }
+
+    // Dangerous mutations are evaluated on the resulting state, so they apply to
+    // creates and replaces (a brand-new public database or world-open rule is as
+    // dangerous as one mutated into that state), not only in-place updates.
+    if (rc.changeKind === 'create' || rc.changeKind === 'update' || rc.changeKind === 'replace') {
+      const action: 'create' | 'update' | 'replace' = rc.changeKind
       for (const m of matchDangerousMutations(rc)) {
         findings.push({
           severity: m.severity,
           type: 'dangerous_mutation',
           resource: { address: rc.address, type: rc.type },
-          action: 'update',
+          action,
           reason: m.summary,
           summary: m.summary,
           agentAuthored: agent.likelyAgent,
@@ -152,6 +163,7 @@ export function classifyPlan(changes: ResourceChange[], opts: ClassifyOptions = 
     approved,
     strict,
     agent,
+    planHash: opts.planHash,
     stats: { resourcesScanned: changes.length, destructive, dangerous, criticalCount, warningCount },
   }
 }

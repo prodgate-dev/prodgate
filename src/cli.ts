@@ -15,6 +15,7 @@
 
 import { Command } from 'commander'
 import * as fs from 'fs'
+import * as crypto from 'crypto'
 import { parsePlan } from './plan'
 import { detectAgent, AgentMetadata } from './agent'
 import { classifyPlan, Config } from './classify'
@@ -48,8 +49,14 @@ program
     }
 
     let changes
+    let planHash: string
     try {
-      changes = parsePlan(readTextFile(planPath))
+      const text = readTextFile(planPath)
+      // Hash the BOM-stripped text so the same logical plan hashes identically
+      // regardless of encoding. Approvals can later be tied to this hash.
+      const normalized = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text
+      planHash = 'sha256:' + crypto.createHash('sha256').update(normalized).digest('hex')
+      changes = parsePlan(text)
     } catch (e) {
       console.error((e as Error).message)
       process.exit(2)
@@ -65,7 +72,7 @@ program
     const approved = !!options.approved || process.env.PRODGATE_APPROVED === 'true'
     const config = loadConfig(options.config)
 
-    const result = classifyPlan(changes, { agent, approved, strict: !!options.strict, config })
+    const result = classifyPlan(changes, { agent, approved, strict: !!options.strict, config, planHash })
 
     let output: string
     if (options.json) {

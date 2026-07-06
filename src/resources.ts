@@ -115,8 +115,10 @@ export const DANGEROUS_MUTATIONS: DangerousRule[] = [
   {
     id: 'database-made-public',
     appliesTo: (t) => t === 'aws_db_instance' || t === 'aws_rds_cluster' || t === 'aws_rds_cluster_instance',
+    // Dangerous whenever the resulting state is public and it was not already:
+    // fires on an update (false -> true) and on a create (no prior state).
     evaluate: (b, a) =>
-      b && a && b.publicly_accessible === false && a.publicly_accessible === true
+      a && a.publicly_accessible === true && b?.publicly_accessible !== true
         ? { severity: 'CRITICAL', summary: 'makes a database publicly accessible', attribute: 'publicly_accessible' }
         : null,
   },
@@ -124,10 +126,18 @@ export const DANGEROUS_MUTATIONS: DangerousRule[] = [
     id: 's3-public-access-block-weakened',
     appliesTo: (t) => t === 'aws_s3_bucket_public_access_block',
     evaluate: (b, a) => {
-      if (!b || !a) return null
+      if (!a) return null
       const keys = ['block_public_acls', 'ignore_public_acls', 'block_public_policy', 'restrict_public_buckets']
-      return keys.some(k => b[k] === true && a[k] === false)
-        ? { severity: 'CRITICAL', summary: 'weakens the S3 public access block', attribute: 'public access block' }
+      if (b) {
+        // update: any protection flipped from on to off
+        return keys.some(k => b[k] === true && a[k] === false)
+          ? { severity: 'CRITICAL', summary: 'weakens the S3 public access block', attribute: 'public access block' }
+          : null
+      }
+      // create: only flag an unambiguously wide-open block (every protection off),
+      // so a partially-public static-site bucket does not cry wolf.
+      return keys.every(k => a[k] === false)
+        ? { severity: 'CRITICAL', summary: 'creates an S3 public access block with no protections', attribute: 'public access block' }
         : null
     },
   },

@@ -27,6 +27,20 @@ runs:
         # co-author trailers; degrades gracefully otherwise).
         git log --format='%B' -n 50 HEAD > "$RUNNER_TEMP/prodgate-commits.txt" 2>/dev/null || true
 
+    - name: Resolve approval from live labels
+      id: approval
+      if: ${{ github.event_name == 'pull_request' }}
+      uses: actions/github-script@v9
+      with:
+        github-token: ${{ inputs.github-token }}
+        script: |
+          # Read labels live from the API rather than the event payload, so adding
+          # the label and re-running passes the gate without a new commit.
+          const { owner, repo } = context.repo
+          const { data } = await github.rest.issues.listLabelsOnIssue({ owner, repo, issue_number: context.issue.number })
+          const approved = data.some(l => l.name === 'prodgate-approved')
+          core.setOutput('approved', approved ? 'true' : 'false')
+
     - name: Run Prodgate
       id: prodgate
       shell: bash
@@ -34,7 +48,7 @@ runs:
         PRODGATE_PR_AUTHOR: ${{ github.event.pull_request.user.login }}
         PRODGATE_BRANCH: ${{ github.head_ref }}
         PRODGATE_PR_BODY: ${{ github.event.pull_request.body }}
-        PRODGATE_APPROVED: ${{ contains(github.event.pull_request.labels.*.name, 'prodgate-approved') }}
+        PRODGATE_APPROVED: ${{ steps.approval.outputs.approved }}
       run: |
         set +e
         npx --yes prodgate@^1 check "${{ inputs.plan-json }}" \

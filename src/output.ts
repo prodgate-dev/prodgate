@@ -65,6 +65,7 @@ export function formatHuman(result: PlanResult): string {
   lines.push(BAR)
   const verdict = result.verdict === 'pass' ? 'PASS' : 'FAIL'
   lines.push(`Verdict: ${verdict}${result.approved && result.verdict === 'pass' && (criticals.length || warnings.length) ? ' (approved)' : ''}`)
+  if (result.planHash) lines.push(`Plan hash: ${result.planHash}`)
   lines.push('')
   return lines.join('\n')
 }
@@ -88,17 +89,13 @@ export function formatGithub(result: PlanResult): string {
   if (criticals.length > 0) {
     lines.push('')
     lines.push(`### Critical (${criticals.length})`)
-    for (const f of criticals) {
-      lines.push(`- \`${f.resource.address}\` (${f.action}): ${f.summary}`)
-    }
+    for (const f of criticals) lines.push(...githubFinding(f))
   }
 
   if (warnings.length > 0) {
     lines.push('')
     lines.push(`### Warnings (${warnings.length})`)
-    for (const f of warnings) {
-      lines.push(`- \`${f.resource.address}\` (${f.action}): ${f.summary}`)
-    }
+    for (const f of warnings) lines.push(...githubFinding(f))
   }
 
   if (result.findings.length === 0) {
@@ -111,8 +108,19 @@ export function formatGithub(result: PlanResult): string {
     lines.push('A human approved these changes via the `prodgate-approved` label; the gate is passing.')
   } else if (criticals.length > 0) {
     lines.push('')
-    lines.push('Add the `prodgate-approved` label to approve these changes and pass the gate.')
+    lines.push('To approve: add the `prodgate-approved` label to this PR, then re-run the check.')
+  }
+
+  if (result.planHash) {
+    lines.push('')
+    lines.push(`<sub>Plan hash: \`${result.planHash}\`</sub>`)
   }
 
   return lines.join('\n')
+}
+
+// A scannable per-finding block: action + resource on the lead line, the reason
+// indented beneath it.
+function githubFinding(f: PlanFinding): string[] {
+  return [`- **${f.action.toUpperCase()}** \`${f.resource.address}\``, `  Why: ${f.reason}`]
 }
