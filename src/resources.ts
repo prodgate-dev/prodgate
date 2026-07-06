@@ -61,14 +61,29 @@ const SENSITIVE_PORTS = [22, 3389, 3306, 5432, 6379, 27017, 9200, 5601, 5984, 11
 function ingressList(v: any): any[] {
   if (!v || typeof v !== 'object') return []
   if (Array.isArray(v.ingress)) return v.ingress
-  // single-rule resources (aws_security_group_rule, aws_vpc_security_group_ingress_rule)
-  if (v.type === 'ingress' || v.cidr_ipv4 !== undefined || v.cidr_blocks !== undefined) return [v]
+  // Single-rule resources (aws_security_group_rule, aws_vpc_security_group_ingress_rule).
+  // aws_security_group_rule carries a `type`; only ingress is in scope. An egress rule
+  // to 0.0.0.0/0 is normal outbound access and must never be flagged as an opening.
+  if (v.type !== undefined) return v.type === 'ingress' ? [v] : []
+  if (
+    v.cidr_ipv4 !== undefined ||
+    v.cidr_blocks !== undefined ||
+    v.cidr_ipv6 !== undefined ||
+    v.ipv6_cidr_blocks !== undefined
+  )
+    return [v]
   return []
 }
 function isWorldOpen(ing: any): boolean {
-  return (Array.isArray(ing?.cidr_blocks) && ing.cidr_blocks.includes('0.0.0.0/0')) || ing?.cidr_ipv4 === '0.0.0.0/0'
+  const v4 = (Array.isArray(ing?.cidr_blocks) && ing.cidr_blocks.includes('0.0.0.0/0')) || ing?.cidr_ipv4 === '0.0.0.0/0'
+  const v6 = (Array.isArray(ing?.ipv6_cidr_blocks) && ing.ipv6_cidr_blocks.includes('::/0')) || ing?.cidr_ipv6 === '::/0'
+  return v4 || v6
 }
 function portRange(ing: any): { from: number; to: number } {
+  // protocol "-1"/"all" means every protocol and every port in AWS, regardless of
+  // the from/to fields (which are commonly 0/0 in that case).
+  const proto = String(ing?.protocol ?? '').toLowerCase()
+  if (proto === '-1' || proto === 'all') return { from: 0, to: 65535 }
   const from = Number(ing?.from_port ?? 0)
   const to = Number(ing?.to_port ?? 65535)
   return { from: isNaN(from) ? 0 : from, to: isNaN(to) ? 65535 : to }

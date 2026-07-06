@@ -1,0 +1,9 @@
+{
+  "format_version": "1.2",
+  "resource_changes": [
+    { "address": "aws_security_group_rule.all_in", "mode": "managed", "type": "aws_security_group_rule", "name": "all_in",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": { "actions": ["create"], "before": null,
+        "after": { "type": "ingress", "from_port": 0, "to_port": 0, "protocol": "-1", "cidr_blocks": ["0.0.0.0/0"] } } }
+  ]
+}

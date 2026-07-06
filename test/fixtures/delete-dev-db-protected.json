@@ -1,0 +1,8 @@
+{
+  "format_version": "1.2",
+  "resource_changes": [
+    { "address": "aws_db_instance.preview", "mode": "managed", "type": "aws_db_instance", "name": "preview",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": { "actions": ["delete"], "before": { "identifier": "preview", "deletion_protection": true, "tags_all": { "Environment": "dev" } }, "after": null } }
+  ]
+}

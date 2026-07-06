@@ -18,15 +18,24 @@ export type AgentMetadata = {
 
 export type AgentInfo = { likelyAgent: boolean; signals: string[] }
 
+// Agent names as whole tokens only, so "devinsmith" or "moved the cursor" do not
+// match. Applied to structured fields (trailers, author, branch), never free prose.
 const AGENT_RE = /\b(claude|cursor|copilot|devin|aider|codex|sweep|tabnine|ona)\b|\bgpt-?[0-9]?\b/i
-const BOT_LOGIN_RE = /\[bot\]$|-bot$|^bot-|cursor|devin|sweep|claude|copilot/i
+// GitHub App bots always carry a "[bot]" suffix; named agents are covered by AGENT_RE
+// (word-anchored), so this stays scoped to bot-suffix patterns and does not fire on a
+// human login that merely contains an agent substring.
+const BOT_LOGIN_RE = /\[bot\]$|-bot$|^bot-/i
 const BRANCH_RE = /^(cursor|claude|devin|aider|copilot|codex|sweep|bot|ai)[\/-]/i
+// A high-precision PR-body marker (the phrase tools stamp), not a bare agent name,
+// so ordinary prose mentioning an agent does not trip the flag.
+const PRBODY_MARKER_RE = /generated (with|by) (claude|cursor|copilot|devin|codex|aider)|🤖 generated/i
 
 export function detectAgent(meta: AgentMetadata): AgentInfo {
   const signals: string[] = []
   const commits = meta.commitMessages ?? ''
 
-  // Co-Authored-By trailers (Claude Code, Cursor, etc. stamp these).
+  // Co-Authored-By trailers (Claude Code, Cursor, etc. stamp these). This is the
+  // highest-signal source: a structured field, not free prose.
   const trailers = commits.match(/Co-Authored-By:[^\n]+/gi) ?? []
   for (const t of trailers) {
     if (AGENT_RE.test(t)) {
@@ -41,11 +50,8 @@ export function detectAgent(meta: AgentMetadata): AgentInfo {
   if (meta.branch && BRANCH_RE.test(meta.branch)) {
     signals.push('branch name signals an agent: ' + meta.branch)
   }
-  if (meta.prBody && AGENT_RE.test(meta.prBody)) {
-    signals.push('PR description references an AI agent')
-  }
-  if (signals.length === 0 && commits && AGENT_RE.test(commits)) {
-    signals.push('commit message references an AI agent')
+  if (meta.prBody && PRBODY_MARKER_RE.test(meta.prBody)) {
+    signals.push('PR description carries an agent-generated marker')
   }
 
   return { likelyAgent: signals.length > 0, signals }

@@ -160,6 +160,70 @@ console.log('─'.repeat(50))
   check('create-public-web-sg: warning only, no false critical', r.verdict === 'pass' && r.stats.criticalCount === 0 && r.stats.warningCount === 1)
 }
 
+// ── security-group correctness (review Tier 1/2) ───────────────────────────
+
+// A standard allow-all egress rule must NOT be flagged as an opening
+{
+  const r = classifyPlan(fixture('egress-allow-world.json'))
+  check('egress-allow-world: pass, egress is not an opening', r.verdict === 'pass' && r.findings.length === 0)
+}
+
+// protocol "-1" means all ports: all traffic from the world -> CRITICAL
+{
+  const r = classifyPlan(fixture('sg-all-traffic-world.json'))
+  check('sg-all-traffic-world: fail, all-ports critical', r.verdict === 'fail' && r.findings.some(f => f.type === 'dangerous_mutation' && f.severity === 'CRITICAL'))
+}
+
+// SSH open to ::/0 (IPv6) -> CRITICAL
+{
+  const r = classifyPlan(fixture('sg-ipv6-ssh-world.json'))
+  check('sg-ipv6-ssh-world: fail, ipv6 world-open detected', r.verdict === 'fail' && r.findings.some(f => f.severity === 'CRITICAL'))
+}
+
+// ── ephemeral-environment severity ladder (review Tier 3.2) ────────────────
+
+// Declared-dev stateful teardown -> WARNING, pass (fails under --strict)
+{
+  const r = classifyPlan(fixture('delete-dev-db.json'))
+  check('delete-dev-db: warning, declared non-prod', r.verdict === 'pass' && r.stats.warningCount === 1 && r.findings[0].type === 'destructive_stateful_nonprod')
+  const rs = classifyPlan(fixture('delete-dev-db.json'), { strict: true })
+  check('delete-dev-db --strict: fail', rs.verdict === 'fail')
+}
+
+// staging counts as declared non-prod -> WARNING
+{
+  const r = classifyPlan(fixture('delete-staging-db.json'))
+  check('delete-staging-db: warning, staging is non-prod', r.verdict === 'pass' && r.findings[0].type === 'destructive_stateful_nonprod')
+}
+
+// deletion_protection overrides the downgrade -> CRITICAL
+{
+  const r = classifyPlan(fixture('delete-dev-db-protected.json'))
+  check('delete-dev-db-protected: fail, protection overrides', r.verdict === 'fail' && r.findings[0].type === 'destructive_stateful')
+}
+
+// Conflicting signals (prod-looking name + dev tag) fail closed -> CRITICAL
+{
+  const r = classifyPlan(fixture('delete-conflict-db.json'))
+  check('delete-conflict-db: fail, conflict fails closed', r.verdict === 'fail' && r.findings[0].type === 'destructive_stateful')
+}
+
+// Untagged stateful delete stays CRITICAL (unknown fails closed)
+{
+  const r = classifyPlan(fixture('delete-db.json'))
+  check('delete-db (untagged): still critical', r.findings[0].type === 'destructive_stateful')
+}
+
+// ── agent detection precision (review Tier 2.3) ────────────────────────────
+
+{
+  check('agent: human "devinsmith" not flagged', detectAgent({ author: 'devinsmith' }).likelyAgent === false)
+  check('agent: prose "moved the cursor" not flagged', detectAgent({ commitMessages: 'moved the cursor to end of line' }).likelyAgent === false)
+  check('agent: bare agent word in PR body not flagged', detectAgent({ prBody: 'we should use codex here maybe' }).likelyAgent === false)
+  check('agent: "cursor[bot]" author flagged', detectAgent({ author: 'cursor[bot]' }).likelyAgent === true)
+  check('agent: PR-body generated marker flagged', detectAgent({ prBody: '🤖 Generated with Claude Code' }).likelyAgent === true)
+}
+
 // A leading BOM (Windows / PowerShell `terraform show -json >` output) must not
 // break parsing — it surfaced as a hard parse failure on a real harvested plan.
 {

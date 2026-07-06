@@ -17,10 +17,11 @@
 import { ResourceChange } from './plan'
 import { Severity } from './resources'
 import { AgentInfo } from './agent'
-import { isStateful, isProduction, matchDangerousMutations } from './policy'
+import { isStateful, isProduction, nonProductionTag, matchDangerousMutations } from './policy'
 
 export type FindingType =
   | 'destructive_stateful'
+  | 'destructive_stateful_nonprod'
   | 'destructive_production'
   | 'destructive_other'
   | 'dangerous_mutation'
@@ -95,15 +96,32 @@ export function classifyPlan(changes: ResourceChange[], opts: ClassifyOptions = 
       const verb = action === 'delete' ? 'deletes' : 'replaces'
 
       if (isStateful(rc)) {
-        findings.push({
-          severity: 'CRITICAL',
-          type: 'destructive_stateful',
-          resource: { address: rc.address, type: rc.type },
-          action,
-          reason: `stateful resource; ${action} causes irreversible data loss`,
-          summary: `${verb} a stateful resource (data loss)`,
-          agentAuthored: agent.likelyAgent,
-        })
+        // Downgrade to WARNING only on a team-declared non-production environment,
+        // and never when the resource itself is protected or looks like prod. Unknown
+        // (untagged) or conflicting signals fail closed at CRITICAL.
+        const npTag = nonProductionTag(rc)
+        const protectionOn = rc.before?.deletion_protection === true || rc.before?.deletion_protection_enabled === true
+        if (npTag && !isProduction(rc) && !protectionOn) {
+          findings.push({
+            severity: 'WARNING',
+            type: 'destructive_stateful_nonprod',
+            resource: { address: rc.address, type: rc.type },
+            action,
+            reason: `stateful resource in a declared non-production environment (tagged ${npTag}); ${action} still causes data loss`,
+            summary: `${verb} a stateful resource in a declared non-production environment (data loss)`,
+            agentAuthored: agent.likelyAgent,
+          })
+        } else {
+          findings.push({
+            severity: 'CRITICAL',
+            type: 'destructive_stateful',
+            resource: { address: rc.address, type: rc.type },
+            action,
+            reason: `stateful resource; ${action} causes irreversible data loss`,
+            summary: `${verb} a stateful resource (data loss)`,
+            agentAuthored: agent.likelyAgent,
+          })
+        }
       } else if (isProduction(rc)) {
         findings.push({
           severity: 'CRITICAL',

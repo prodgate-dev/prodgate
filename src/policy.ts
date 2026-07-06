@@ -30,6 +30,18 @@ export function isProduction(rc: ResourceChange): boolean {
   return PROD_NAME.test(rc.address) && !NONPROD_NAME.test(rc.address)
 }
 
+// An explicit, team-declared non-production environment. This is the OPPOSITE and
+// stronger question to isProduction: not "does this look non-prod?" but "did the
+// team declare it non-prod?". Absence of a tag is not non-prod; unknown fails closed.
+const NONPROD_VALUE = /^(dev|develop|development|test|testing|qa|uat|preview|sandbox|sbx|ephemeral|staging|stage)$/i
+
+export function nonProductionTag(rc: ResourceChange): string | null {
+  for (const [k, v] of Object.entries(rc.tags)) {
+    if (PROD_TAG_KEYS.includes(k.toLowerCase()) && NONPROD_VALUE.test(v.trim())) return `${k}=${v}`
+  }
+  return null
+}
+
 export function matchDangerousMutations(rc: ResourceChange): MutationMatch[] {
   const out: MutationMatch[] = []
   for (const rule of DANGEROUS_MUTATIONS) {

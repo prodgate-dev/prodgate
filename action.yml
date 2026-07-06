@@ -22,10 +22,33 @@ runs:
   steps:
     - name: Collect agent-detection signals
       shell: bash
+      env:
+        BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
       run: |
-        # Best-effort recent commit messages (needs a non-shallow checkout to see
-        # co-author trailers; degrades gracefully otherwise).
-        git log --format='%B' -n 50 HEAD > "$RUNNER_TEMP/prodgate-commits.txt" 2>/dev/null || true
+        # Only the PR's own commits, not base-branch history, so a co-author trailer
+        # elsewhere in the base branch does not flag every PR. Needs fetch-depth: 0.
+        if [ -n "$BASE_SHA" ] && [ -n "$HEAD_SHA" ]; then
+          git log --format='%B' "$BASE_SHA..$HEAD_SHA" > "$RUNNER_TEMP/prodgate-commits.txt" 2>/dev/null || true
+        else
+          git log --format='%B' -n 50 HEAD > "$RUNNER_TEMP/prodgate-commits.txt" 2>/dev/null || true
+        fi
+
+    - name: Reset approval on new commits
+      if: ${{ github.event_name == 'pull_request' && github.event.action == 'synchronize' }}
+      continue-on-error: true
+      uses: actions/github-script@v9
+      with:
+        github-token: ${{ inputs.github-token }}
+        script: |
+          // A new commit changes the plan, so any prior approval is stale. Remove the
+          // label; a human must re-approve the new plan. Binds approval to the plan.
+          const { owner, repo } = context.repo
+          try {
+            await github.rest.issues.removeLabel({ owner, repo, issue_number: context.issue.number, name: 'prodgate-approved' })
+          } catch (e) {
+            if (e.status !== 404) throw e // 404 = label was not present, nothing to reset
+          }
 
     - name: Resolve approval from live labels
       id: approval
@@ -34,8 +57,8 @@ runs:
       with:
         github-token: ${{ inputs.github-token }}
         script: |
-          # Read labels live from the API rather than the event payload, so adding
-          # the label and re-running passes the gate without a new commit.
+          // Read labels live from the API rather than the event payload, so adding
+          // the label and re-running passes the gate without a new commit.
           const { owner, repo } = context.repo
           const { data } = await github.rest.issues.listLabelsOnIssue({ owner, repo, issue_number: context.issue.number })
           const approved = data.some(l => l.name === 'prodgate-approved')
@@ -59,6 +82,9 @@ runs:
 
     - name: Post or update PR comment
       if: ${{ github.event_name == 'pull_request' }}
+      # Fork PRs run with a read-only token; commenting 403s. Do not fail a passing
+      # (or failing) verdict on the comment step; the check status is still set below.
+      continue-on-error: true
       uses: actions/github-script@v9
       with:
         github-token: ${{ inputs.github-token }}

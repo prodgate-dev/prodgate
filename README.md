@@ -79,15 +79,16 @@ Verdict: FAIL
 ## What Prodgate flags
 
 **CRITICAL (fails CI):**
-- Deleting or replacing a stateful resource (databases, volumes, buckets, DNS zones, KMS keys, secrets, log groups). Data loss is data loss, in any environment.
+- Deleting or replacing a stateful resource (databases, volumes, buckets, DNS zones, KMS keys, secrets, log groups). Data loss is data loss: critical by default, in any environment and whether the change deletes an existing resource or the plan is ambiguous about where it lives.
 - Deleting or replacing a production-tagged resource.
 - Disabling deletion protection.
-- Making a database publicly accessible.
+- Making a database publicly accessible (on update or create).
 - Weakening an S3 public access block.
-- Opening a sensitive port (SSH, RDP, database ports) to `0.0.0.0/0`.
+- Opening a sensitive port (SSH, RDP, database ports) to `0.0.0.0/0` or `::/0` (on update or create).
 
 **WARNING (informational by default, fails CI with `--strict`):**
-- Deleting or replacing a non-stateful, non-production resource (so it does not cry wolf on dev teardowns).
+- Deleting or replacing a stateful resource **only** when it carries an explicit non-production tag (`Environment=dev/test/qa/staging/preview/sandbox/ephemeral`) and is not otherwise protected. Untagged or prod-looking resources stay CRITICAL; a declared dev teardown drops to WARNING so it does not cry wolf, but is still shown and still fails under `--strict`. A resource with `deletion_protection` on stays CRITICAL regardless of tags.
+- Deleting or replacing a non-stateful, non-production resource.
 - Opening a non-sensitive port to the world.
 - Granting a wildcard (`*`) IAM action or resource.
 
@@ -98,6 +99,8 @@ When a flagged change looks agent-generated, Prodgate says so and shows the sign
 ## Approval (recorded sign-off)
 
 Destructive changes require a human to approve them. In the Action, that is the `prodgate-approved` label; GitHub records who applied it and when. The finding is still reported; only the verdict flips to pass.
+
+Approval is bound to the reviewed plan: pushing a new commit (a `synchronize` event) removes the label automatically, so an approval never carries over to a plan a human has not seen. The PR comment includes a `Plan hash` so you can confirm which plan was approved.
 
 ## Configuration
 
@@ -122,6 +125,18 @@ Zero-config by default. For overrides, add `prodgate.config.json`:
 ## Trust boundary
 
 Prodgate reads a plan JSON file. It does not run Terraform, does not read your state, and never needs cloud credentials. It cannot do anything to your account; it can only read the plan.
+
+## Threat model
+
+Be clear about what a CI gate does and does not defend against. The PR branch controls both the workflow file and the step that produces `plan.json`, so a PR author can, in principle, feed Prodgate a benign plan or remove the step. Prodgate therefore defends against **mistakes and oversight** — the routine destructive change buried in a diff, or an AI agent that deletes the wrong thing — not against an adversary who is deliberately subverting their own CI.
+
+To raise Prodgate from an accident-catcher toward an enforcement control:
+
+- Make the Prodgate check **required** in branch protection, so a PR cannot merge without it.
+- Put `.github/workflows/` under **CODEOWNERS** so changes to the workflow itself need review.
+- Generate `plan.json` from the merge result in a trusted job, not from author-controlled output.
+
+These are standard for any CI-side policy check (OPA, Checkov, and others share the same boundary); naming it is more honest than implying the gate is tamper-proof.
 
 ## Provider coverage
 

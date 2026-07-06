@@ -1,0 +1,8 @@
+{
+  "format_version": "1.2",
+  "resource_changes": [
+    { "address": "aws_db_instance.stg", "mode": "managed", "type": "aws_db_instance", "name": "stg",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": { "actions": ["delete"], "before": { "identifier": "stg", "tags_all": { "Environment": "staging" } }, "after": null } }
+  ]
+}
