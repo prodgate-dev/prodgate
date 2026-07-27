@@ -51,7 +51,7 @@ jobs:
           plan-json: plan.json
 ```
 
-On a destructive or dangerous change, Prodgate fails the check and posts a PR comment. A human approves by adding the **`prodgate-approved`** label (GitHub records who and when); re-run the check and the gate passes.
+On every PR, Prodgate posts a one-line plan summary (what the change adds, changes, replaces, and destroys), so the check is useful even when nothing is wrong. On a destructive or dangerous change, it fails the check and posts the detail. A human approves by adding the **`prodgate-approved`** label (GitHub records who and when); re-run the check and the gate passes.
 
 ## Usage (CLI)
 
@@ -67,6 +67,7 @@ Example output:
 Prodgate Infrastructure Change Report
 ──────────────────────────────────────────────────
 Resources scanned: 1
+Plan summary: 0 to add, 0 to change, 1 to destroy
 
 [CRITICAL] 1 destructive or dangerous change
 
@@ -162,6 +163,10 @@ Prodgate is not a policy platform, and it does not pretend OPA, Sentinel, Checko
 - AWS-first resource coverage. Other providers are added by extending the knowledge base.
 - It reasons about the change in the plan (delete, replace, create, update), not resources that are unchanged (no-op) in the plan.
 - Static analysis of the plan; it does not execute anything.
+
+## Contributing
+
+Adding a resource type or a rule is usually a one-line edit to a data table, not an engine change. See [CONTRIBUTING.md](CONTRIBUTING.md) for how the knowledge base is organized and how to add coverage with a test.
 
 ## Demo
 

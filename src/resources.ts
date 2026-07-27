@@ -46,6 +46,25 @@ export const STATEFUL_RESOURCES: Record<string, StatefulInfo> = {
   aws_ecr_repository: { category: 'registry' },
 }
 
+export type DisruptiveInfo = { category: string }
+
+// Replacing any of these interrupts service while the resource is torn down and
+// recreated, even when no data is lost. Used only to add an informational note to
+// the change digest; it never produces a finding or affects the verdict. Stateful
+// types are deliberately absent: their replace is already CRITICAL for data loss,
+// so a disruption note there would be redundant.
+export const DISRUPTIVE_REPLACE: Record<string, DisruptiveInfo> = {
+  aws_instance: { category: 'compute' },
+  aws_lb: { category: 'load-balancer' },
+  aws_alb: { category: 'load-balancer' },
+  aws_elb: { category: 'load-balancer' },
+  aws_lb_listener: { category: 'load-balancer' },
+  aws_ecs_service: { category: 'service' },
+  aws_eip: { category: 'network' },
+  aws_nat_gateway: { category: 'network' },
+  aws_cloudfront_distribution: { category: 'cdn' },
+}
+
 export type MutationMatch = { severity: Severity; summary: string; attribute: string }
 
 export type DangerousRule = {

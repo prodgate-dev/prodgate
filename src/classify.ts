@@ -17,7 +17,7 @@
 import { ResourceChange } from './plan'
 import { Severity } from './resources'
 import { AgentInfo } from './agent'
-import { isStateful, isProduction, nonProductionTag, matchDangerousMutations } from './policy'
+import { isStateful, isProduction, nonProductionTag, isDisruptiveReplace, matchDangerousMutations } from './policy'
 
 export type FindingType =
   | 'destructive_stateful'
@@ -52,6 +52,9 @@ export type ClassifyOptions = {
 
 export type PlanResult = {
   findings: PlanFinding[]
+  // Resources whose replacement briefly interrupts service. Informational only:
+  // these never produce a finding and never affect the verdict.
+  disruptions: { address: string; type: string }[]
   verdict: 'pass' | 'fail'
   approved: boolean
   strict: boolean
@@ -59,6 +62,13 @@ export type PlanResult = {
   planHash?: string
   stats: {
     resourcesScanned: number
+    // Per-change-kind tallies for the plan digest. replaced is kept separate from
+    // destroyed (Terraform folds a replace into add+destroy) so the digest and the
+    // disruption note can reason about it.
+    created: number
+    updated: number
+    replaced: number
+    destroyed: number
     destructive: number
     dangerous: number
     criticalCount: number
@@ -83,9 +93,25 @@ function matchesAny(address: string, patterns?: string[]): boolean {
 export function classifyPlan(changes: ResourceChange[], opts: ClassifyOptions = {}): PlanResult {
   const agent = opts.agent ?? { likelyAgent: false, signals: [] }
   const findings: PlanFinding[] = []
+  const disruptions: { address: string; type: string }[] = []
+  let created = 0
+  let updated = 0
+  let replaced = 0
+  let destroyed = 0
 
   for (const rc of changes) {
     if (matchesAny(rc.address, opts.config?.ignore)) continue
+
+    if (rc.changeKind === 'create') created++
+    else if (rc.changeKind === 'update') updated++
+    else if (rc.changeKind === 'replace') replaced++
+    else if (rc.changeKind === 'delete') destroyed++
+
+    // A replace of a compute or network resource interrupts service while it is
+    // recreated. Recorded for an informational digest note only, never a finding.
+    if (rc.changeKind === 'replace' && isDisruptiveReplace(rc)) {
+      disruptions.push({ address: rc.address, type: rc.type })
+    }
 
     const destructive = rc.changeKind === 'delete' || rc.changeKind === 'replace'
 
@@ -177,11 +203,12 @@ export function classifyPlan(changes: ResourceChange[], opts: ClassifyOptions = 
 
   return {
     findings,
+    disruptions,
     verdict,
     approved,
     strict,
     agent,
     planHash: opts.planHash,
-    stats: { resourcesScanned: changes.length, destructive, dangerous, criticalCount, warningCount },
+    stats: { resourcesScanned: changes.length, created, updated, replaced, destroyed, destructive, dangerous, criticalCount, warningCount },
   }
 }

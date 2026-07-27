@@ -7,10 +7,14 @@
  */
 
 import { ResourceChange } from './plan'
-import { STATEFUL_RESOURCES, DANGEROUS_MUTATIONS, MutationMatch } from './resources'
+import { STATEFUL_RESOURCES, DISRUPTIVE_REPLACE, DANGEROUS_MUTATIONS, MutationMatch } from './resources'
 
 export function isStateful(rc: ResourceChange): boolean {
   return rc.type in STATEFUL_RESOURCES
+}
+
+export function isDisruptiveReplace(rc: ResourceChange): boolean {
+  return rc.type in DISRUPTIVE_REPLACE
 }
 
 const PROD_TAG_KEYS = ['environment', 'env', 'stage', 'tier']

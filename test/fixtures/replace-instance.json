@@ -1,0 +1,17 @@
+{
+  "format_version": "1.2",
+  "resource_changes": [
+    {
+      "address": "aws_instance.api",
+      "mode": "managed",
+      "type": "aws_instance",
+      "name": "api",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["delete", "create"],
+        "before": { "instance_type": "t3.small", "ami": "ami-0aaa", "tags": { "Name": "api" } },
+        "after": { "instance_type": "t3.medium", "ami": "ami-0bbb", "tags": { "Name": "api" } }
+      }
+    }
+  ]
+}

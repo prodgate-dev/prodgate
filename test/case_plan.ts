@@ -246,6 +246,52 @@ console.log('─'.repeat(50))
   check('bom-prefixed plan: parses and still gates', r.verdict === 'fail' && r.stats.criticalCount === 1)
 }
 
+// ── per-change-kind counts for the plan digest ─────────────────────────────
+
+{
+  const r = classifyPlan(fixture('create-only.json')).stats
+  check('counts create-only: created 1, rest 0', r.created === 1 && r.updated === 0 && r.replaced === 0 && r.destroyed === 0)
+}
+{
+  const r = classifyPlan(fixture('safe-update.json')).stats
+  check('counts safe-update: updated 1, rest 0', r.updated === 1 && r.created === 0 && r.replaced === 0 && r.destroyed === 0)
+}
+{
+  const r = classifyPlan(fixture('replace-volume.json')).stats
+  check('counts replace-volume: replaced 1, destroyed 0', r.replaced === 1 && r.destroyed === 0)
+}
+{
+  const r = classifyPlan(fixture('delete-db.json')).stats
+  check('counts delete-db: destroyed 1, replaced 0', r.destroyed === 1 && r.replaced === 0)
+}
+{
+  // A replace is add+destroy in Terraform, but the digest counts it as its own
+  // kind: the read data source and the no-op are excluded from all four counts.
+  const r = classifyPlan(fixture('large-mixed-plan.json')).stats
+  check('counts large-mixed: 1 add, 1 change, 1 replace, 1 destroy', r.created === 1 && r.updated === 1 && r.replaced === 1 && r.destroyed === 1)
+}
+
+// ── downtime / disruption signal (informational, low-noise) ────────────────
+
+{
+  const r = classifyPlan(fixture('safe-update.json'))
+  check('disruption safe-update: none', r.disruptions.length === 0)
+}
+{
+  // A stateful EBS replace is already a data-loss block; it is deliberately not
+  // disruptive-listed, so it never carries a second, redundant downtime note.
+  const r = classifyPlan(fixture('replace-volume.json'))
+  check('disruption replace-volume: none (stateful, not double-flagged)', r.disruptions.length === 0)
+}
+{
+  // Replacing a compute resource surfaces a disruption note, adds NO finding, and
+  // does not block: presence without noise.
+  const r = classifyPlan(fixture('replace-instance.json'))
+  check('disruption replace-instance: surfaced', r.disruptions.some(d => d.type === 'aws_instance'))
+  check('disruption replace-instance: no extra finding', r.stats.warningCount === 1 && r.findings.length === 1)
+  check('disruption replace-instance: passes (no block)', r.verdict === 'pass')
+}
+
 console.log('\n' + '─'.repeat(50))
 if (failures === 0) {
   console.log('All plan tests passed')
