@@ -2,6 +2,10 @@
 
 Block destructive infrastructure changes in CI before they ship.
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/prodgate-dev/prodgate/main/demo/prodgate.gif" alt="Prodgate reads a Terraform plan and blocks an AI agent's attempt to delete the production database" width="760">
+</p>
+
 Prodgate reads a Terraform/OpenTofu plan and fails the build when a change would irreversibly destroy production data or expose it, especially when an AI agent generated the change. It is a CI gate, not a scanner: it reasons about the *change*, not the static config.
 
 It works out of the box with no rules to write, and it reads the plan as a file: it never runs Terraform and never needs your cloud credentials.

@@ -1,0 +1,124 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.9.5",
+  "resource_changes": [
+    {
+      "address": "aws_ecs_service.web",
+      "mode": "managed",
+      "type": "aws_ecs_service",
+      "name": "web",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": { "name": "web", "desired_count": 3, "launch_type": "FARGATE" }
+      }
+    },
+    {
+      "address": "aws_cloudwatch_log_group.web",
+      "mode": "managed",
+      "type": "aws_cloudwatch_log_group",
+      "name": "web",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": { "name": "/ecs/web", "retention_in_days": 30 }
+      }
+    },
+    {
+      "address": "aws_iam_role.web_task",
+      "mode": "managed",
+      "type": "aws_iam_role",
+      "name": "web_task",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": { "name": "web-task", "assume_role_policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"ecs-tasks.amazonaws.com\"},\"Action\":\"sts:AssumeRole\"}]}" }
+      }
+    },
+    {
+      "address": "aws_security_group.web",
+      "mode": "managed",
+      "type": "aws_security_group",
+      "name": "web",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {
+          "name": "web-sg",
+          "ingress": [
+            { "from_port": 443, "to_port": 443, "protocol": "tcp", "cidr_blocks": ["10.0.0.0/16"] }
+          ]
+        }
+      }
+    },
+    {
+      "address": "aws_lb_target_group.web",
+      "mode": "managed",
+      "type": "aws_lb_target_group",
+      "name": "web",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": { "name": "web-tg", "port": 443, "protocol": "HTTPS", "target_type": "ip" }
+      }
+    },
+    {
+      "address": "aws_ssm_parameter.web_url",
+      "mode": "managed",
+      "type": "aws_ssm_parameter",
+      "name": "web_url",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": { "name": "/web/url", "type": "String" }
+      }
+    },
+    {
+      "address": "aws_autoscaling_group.web",
+      "mode": "managed",
+      "type": "aws_autoscaling_group",
+      "name": "web",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["update"],
+        "before": { "name": "web-asg", "min_size": 2, "max_size": 4, "desired_capacity": 2 },
+        "after": { "name": "web-asg", "min_size": 3, "max_size": 6, "desired_capacity": 3 }
+      }
+    },
+    {
+      "address": "aws_lambda_function.api",
+      "mode": "managed",
+      "type": "aws_lambda_function",
+      "name": "api",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["update"],
+        "before": { "function_name": "api", "memory_size": 256 },
+        "after": { "function_name": "api", "memory_size": 512 }
+      }
+    },
+    {
+      "address": "aws_db_instance.production",
+      "mode": "managed",
+      "type": "aws_db_instance",
+      "name": "production",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["delete"],
+        "before": {
+          "identifier": "prod-db",
+          "engine": "postgres",
+          "instance_class": "db.r6g.large",
+          "tags": { "Environment": "production", "Name": "prod-db" }
+        },
+        "after": null
+      }
+    }
+  ]
+}

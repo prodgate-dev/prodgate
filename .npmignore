@@ -3,3 +3,4 @@ test/
 *.ts
 tsconfig.json
 .github/
+demo/
