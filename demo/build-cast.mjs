@@ -11,14 +11,14 @@ const here = dirname(fileURLToPath(import.meta.url))
 const root = join(here, '..')
 
 // Run the real CLI and capture exactly what it prints.
-const run = spawnSync(process.execPath, ['dist/cli.js', 'check', 'demo/plan.json', '--commits-file', 'demo/commits.txt'], {
+const run = spawnSync(process.execPath, ['dist/cli.js', 'check', 'demo/plan.json', '--commits-file', 'demo/commits.txt', '--color'], {
   cwd: root,
   encoding: 'utf8',
 })
 const output = (run.stdout || '').replace(/\r\n/g, '\n').replace(/\n$/, '')
 
 const COLS = 92
-const ROWS = 22
+const ROWS = 20
 const command = 'prodgate check plan.json'
 
 const events = []
@@ -30,8 +30,10 @@ push(0.4, '$ ')
 for (const ch of command) push(0.05, ch)
 push(0.5, '\r\n')
 
-// Stream the real output line by line so it reads like a live run.
+// Stream the real output line by line so it reads like a live run. The trailing
+// plan-hash line is dropped so the demo rests on the FAIL verdict.
 const lines = output.split('\n')
+while (lines.length && (lines[lines.length - 1].startsWith('Plan hash:') || lines[lines.length - 1] === '')) lines.pop()
 for (const line of lines) push(0.11, line + '\r\n')
 
 // Hold on the final frame.

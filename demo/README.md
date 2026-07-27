@@ -20,10 +20,11 @@ From the repo root, with the project built (`npm run build`):
 node demo/build-cast.mjs
 ```
 
-Then render. The GIF uses [agg](https://github.com/asciinema/agg):
+Then render. The GIF uses [agg](https://github.com/asciinema/agg) with a
+GitHub-dark palette so it sits well in the README:
 
 ```bash
-agg --theme monokai --font-size 16 --last-frame-duration 1 demo/prodgate.cast demo/prodgate.gif
+agg --theme "161b22,c9d1d9,484f58,ff4d4f,3fb950,d29922,58a6ff,bc8cff,39c5cf,b1bac4" --font-size 16 --last-frame-duration 1 demo/prodgate.cast demo/prodgate.gif
 ```
 
 The SVG uses [svg-term-cli](https://github.com/marionebl/svg-term-cli):

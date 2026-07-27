@@ -1,4 +1,4 @@
-{"version":2,"width":92,"height":22,"title":"prodgate","env":{"TERM":"xterm-256color"}}
+{"version":2,"width":92,"height":20,"title":"prodgate","env":{"TERM":"xterm-256color"}}
 [0.4,"o","$ "]
 [0.45,"o","p"]
 [0.5,"o","r"]
@@ -31,7 +31,7 @@
 [2.54,"o","Resources scanned: 9\r\n"]
 [2.65,"o","Plan summary: 6 to add, 2 to change, 1 to destroy\r\n"]
 [2.76,"o","\r\n"]
-[2.87,"o","[CRITICAL] 1 destructive or dangerous change\r\n"]
+[2.87,"o","\u001b[1;31m[CRITICAL] 1 destructive or dangerous change\u001b[0m\r\n"]
 [2.98,"o","\r\n"]
 [3.09,"o","  DELETE   aws_db_instance.production         deletes a stateful resource (data loss)\r\n"]
 [3.2,"o","\r\n"]
@@ -39,7 +39,5 @@
 [3.42,"o","           co-author trailer: Claude <noreply@anthropic.com>\r\n"]
 [3.53,"o","\r\n"]
 [3.64,"o","──────────────────────────────────────────────────\r\n"]
-[3.75,"o","Verdict: FAIL\r\n"]
-[3.86,"o","Plan hash: sha256:9cbe261268f1eab1a8de21e0ff4c623197207137660157450cf2c911d1da95ce\r\n"]
-[3.97,"o","\r\n"]
-[6.77,"o",""]
+[3.75,"o","Verdict: \u001b[1;31mFAIL\u001b[0m\r\n"]
+[6.55,"o",""]

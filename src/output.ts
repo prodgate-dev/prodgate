@@ -10,6 +10,20 @@ import { PlanResult, PlanFinding } from './classify'
 
 const BAR = '─'.repeat(50)
 
+type Paint = (s: string) => string
+type Palette = { red: Paint; yellow: Paint; green: Paint }
+
+// ANSI color for the terminal report only. Disabled by default; the caller turns
+// it on for a TTY. The GitHub and JSON outputs are never colored.
+function palette(on: boolean): Palette {
+  if (!on) {
+    const plain: Paint = s => s
+    return { red: plain, yellow: plain, green: plain }
+  }
+  const wrap = (code: string): Paint => s => `\x1b[${code}m${s}\x1b[0m`
+  return { red: wrap('1;31'), yellow: wrap('1;33'), green: wrap('1;32') }
+}
+
 // One-line tally of what the plan does, in Terraform's own add/change/destroy
 // phrasing. The replace segment only appears when there is something to replace,
 // so a clean plan stays short.
@@ -43,7 +57,8 @@ function humanLine(f: PlanFinding): string {
   return `  ${action} ${address} ${f.summary}`
 }
 
-export function formatHuman(result: PlanResult): string {
+export function formatHuman(result: PlanResult, opts: { color?: boolean } = {}): string {
+  const c = palette(!!opts.color)
   const lines: string[] = []
   const s = result.stats
   const criticals = result.findings.filter(f => f.severity === 'CRITICAL')
@@ -57,14 +72,14 @@ export function formatHuman(result: PlanResult): string {
 
   if (criticals.length > 0) {
     lines.push('')
-    lines.push(`[CRITICAL] ${criticals.length} destructive or dangerous change${criticals.length > 1 ? 's' : ''}`)
+    lines.push(c.red(`[CRITICAL] ${criticals.length} destructive or dangerous change${criticals.length > 1 ? 's' : ''}`))
     lines.push('')
     for (const f of criticals) lines.push(humanLine(f))
   }
 
   if (warnings.length > 0) {
     lines.push('')
-    lines.push(`[WARNING] ${warnings.length} change${warnings.length > 1 ? 's' : ''} to review`)
+    lines.push(c.yellow(`[WARNING] ${warnings.length} change${warnings.length > 1 ? 's' : ''} to review`))
     lines.push('')
     for (const f of warnings) lines.push(humanLine(f))
   }
@@ -93,7 +108,7 @@ export function formatHuman(result: PlanResult): string {
 
   lines.push('')
   lines.push(BAR)
-  const verdict = result.verdict === 'pass' ? 'PASS' : 'FAIL'
+  const verdict = result.verdict === 'pass' ? c.green('PASS') : c.red('FAIL')
   lines.push(`Verdict: ${verdict}${result.approved && result.verdict === 'pass' && (criticals.length || warnings.length) ? ' (approved)' : ''}`)
   if (result.planHash) lines.push(`Plan hash: ${result.planHash}`)
   lines.push('')

@@ -36,6 +36,7 @@ program
   .option('--github', 'Output GitHub-flavored markdown for PR comments')
   .option('--output <file>', 'Write output to a file')
   .option('--strict', 'Also fail on warnings')
+  .option('--color', 'Force ANSI color in the report even when output is not a terminal')
   .option('--approved', 'Treat the change as human-approved (gate passes; findings still reported)')
   .option('--config <file>', 'Path to prodgate.config.json')
   .option('--pr-author <author>', 'PR author login (for agent detection)')
@@ -74,13 +75,18 @@ program
 
     const result = classifyPlan(changes, { agent, approved, strict: !!options.strict, config, planHash })
 
+    // Color the terminal report only, and never the GitHub or JSON output. Default
+    // to a TTY that is not being redirected to a file; NO_COLOR disables it, and
+    // --color forces it on (used to capture the demo recording).
+    const useColor = !!options.color || (!process.env.NO_COLOR && !!process.stdout.isTTY && !options.output)
+
     let output: string
     if (options.json) {
       output = JSON.stringify(result, null, 2)
     } else if (options.github) {
       output = formatGithub(result)
     } else {
-      output = formatHuman(result)
+      output = formatHuman(result, { color: useColor })
     }
 
     if (options.output) {
