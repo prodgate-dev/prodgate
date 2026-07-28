@@ -141,19 +141,37 @@ function iamHasWildcard(policy: any): boolean {
   return false
 }
 
+// ---- shared unknown-value handling ----
+
+// afterUnknown mirrors after with `true` where a value is computed and not known at
+// plan time. When a security-critical field is unknown, a rule cannot prove the
+// resulting state is safe, so it flags it for review with one standard WARNING.
+function anyUnknown(afterUnknown: any, attrs: string[]): boolean {
+  if (!afterUnknown || typeof afterUnknown !== 'object') return false
+  return attrs.some(a => afterUnknown[a] === true)
+}
+function indeterminate(attribute: string, what: string): MutationMatch {
+  return {
+    severity: 'WARNING',
+    summary: `resulting ${what} is unknown at plan time; cannot confirm it is safe (needs review)`,
+    attribute,
+  }
+}
+
 // ---- the rules ----
 
 export const DANGEROUS_MUTATIONS: DangerousRule[] = [
   {
     id: 'deletion-protection-disabled',
     appliesTo: () => true,
-    evaluate: (b, a) => {
-      if (!b || !a) return null
+    evaluate: (b, a, au) => {
+      if (!b) return null
       const wasOn = b.deletion_protection === true || b.deletion_protection_enabled === true
-      const nowOff = a.deletion_protection === false || a.deletion_protection_enabled === false
-      return wasOn && nowOff
-        ? { severity: 'CRITICAL', summary: 'disables deletion protection', attribute: 'deletion_protection' }
-        : null
+      if (!wasOn) return null
+      const nowOff = !!a && (a.deletion_protection === false || a.deletion_protection_enabled === false)
+      if (nowOff) return { severity: 'CRITICAL', summary: 'disables deletion protection', attribute: 'deletion_protection' }
+      if (anyUnknown(au, ['deletion_protection', 'deletion_protection_enabled'])) return indeterminate('deletion_protection', 'deletion protection')
+      return null
     },
   },
   {
@@ -167,8 +185,8 @@ export const DANGEROUS_MUTATIONS: DangerousRule[] = [
       if (a && a.publicly_accessible === true && b?.publicly_accessible !== true) {
         return { severity: 'CRITICAL', summary: 'makes a database publicly accessible', attribute: 'publicly_accessible' }
       }
-      if (au?.publicly_accessible === true && b?.publicly_accessible !== true) {
-        return { severity: 'WARNING', summary: 'resulting publicly_accessible is unknown at plan time; cannot confirm the database stays private (needs review)', attribute: 'publicly_accessible' }
+      if (anyUnknown(au, ['publicly_accessible']) && b?.publicly_accessible !== true) {
+        return indeterminate('publicly_accessible', 'database public access')
       }
       return null
     },
@@ -176,15 +194,18 @@ export const DANGEROUS_MUTATIONS: DangerousRule[] = [
   {
     id: 's3-public-access-block-weakened',
     appliesTo: (t) => t === 'aws_s3_bucket_public_access_block',
-    evaluate: (b, a) => {
-      if (!a) return null
+    evaluate: (b, a, au) => {
       const keys = ['block_public_acls', 'ignore_public_acls', 'block_public_policy', 'restrict_public_buckets']
       if (b) {
         // update: any protection flipped from on to off
-        return keys.some(k => b[k] === true && a[k] === false)
-          ? { severity: 'CRITICAL', summary: 'weakens the S3 public access block', attribute: 'public access block' }
-          : null
+        if (a && keys.some(k => b[k] === true && a[k] === false)) {
+          return { severity: 'CRITICAL', summary: 'weakens the S3 public access block', attribute: 'public access block' }
+        }
+        // a protection that was on becomes unknown: cannot confirm it stays on
+        if (anyUnknown(au, keys.filter(k => b[k] === true))) return indeterminate('public access block', 'S3 public access block')
+        return null
       }
+      if (!a) return null
       // create: only flag an unambiguously wide-open block (every protection off),
       // so a partially-public static-site bucket does not cry wolf.
       return keys.every(k => a[k] === false)
@@ -196,18 +217,26 @@ export const DANGEROUS_MUTATIONS: DangerousRule[] = [
     id: 'security-group-opened-to-world',
     appliesTo: (t) =>
       t === 'aws_security_group' || t === 'aws_security_group_rule' || t === 'aws_vpc_security_group_ingress_rule',
-    evaluate: (b, a) => {
+    evaluate: (b, a, au) => {
       const after = openWorldRanges(a)
-      if (after.length === 0) return null
-      const before = openWorldRanges(b)
-      const newly = after.filter(r => !before.some(q => q.from === r.from && q.to === r.to))
-      if (newly.length === 0) return null
-      const sensitive = newly.some(coversSensitive)
-      return {
-        severity: sensitive ? 'CRITICAL' : 'WARNING',
-        summary: sensitive ? 'opens a sensitive port to 0.0.0.0/0' : 'opens a security group to 0.0.0.0/0',
-        attribute: 'ingress',
+      if (after.length > 0) {
+        const before = openWorldRanges(b)
+        const newly = after.filter(r => !before.some(q => q.from === r.from && q.to === r.to))
+        if (newly.length > 0) {
+          const sensitive = newly.some(coversSensitive)
+          return {
+            severity: sensitive ? 'CRITICAL' : 'WARNING',
+            summary: sensitive ? 'opens a sensitive port to 0.0.0.0/0' : 'opens a security group to 0.0.0.0/0',
+            attribute: 'ingress',
+          }
+        }
       }
+      // ingress is computed and unknown, and it was not already world-open: we cannot
+      // confirm the resulting rules do not open it to the world.
+      if (anyUnknown(au, ['ingress', 'cidr_blocks', 'cidr_ipv4', 'ipv6_cidr_blocks', 'cidr_ipv6']) && openWorldRanges(b).length === 0) {
+        return indeterminate('ingress', 'security group ingress')
+      }
+      return null
     },
   },
   {
@@ -217,9 +246,12 @@ export const DANGEROUS_MUTATIONS: DangerousRule[] = [
       t === 'aws_iam_role_policy' ||
       t === 'aws_iam_user_policy' ||
       t === 'aws_iam_group_policy',
-    evaluate: (b, a) =>
-      iamHasWildcard(a?.policy) && !iamHasWildcard(b?.policy)
-        ? { severity: 'WARNING', summary: 'grants a wildcard (*) IAM action or resource', attribute: 'policy' }
-        : null,
+    evaluate: (b, a, au) => {
+      if (iamHasWildcard(a?.policy) && !iamHasWildcard(b?.policy)) {
+        return { severity: 'WARNING', summary: 'grants a wildcard (*) IAM action or resource', attribute: 'policy' }
+      }
+      if (anyUnknown(au, ['policy']) && !iamHasWildcard(b?.policy)) return indeterminate('policy', 'IAM policy')
+      return null
+    },
   },
 ]

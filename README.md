@@ -105,11 +105,12 @@ A Terraform plan can contain secrets in plaintext (passwords, keys, tokens), eve
 - Weakening an S3 public access block.
 - Opening a sensitive port (SSH, RDP, database ports) to `0.0.0.0/0` or `::/0` (on update or create).
 
-**WARNING (informational by default, fails CI with `--strict`):**
-- Deleting or replacing a stateful resource **only** when it carries an explicit non-production tag (`Environment=dev/test/qa/staging/preview/sandbox/ephemeral`) and is not otherwise protected. Untagged or prod-looking resources stay CRITICAL; a declared dev teardown drops to WARNING so it does not cry wolf, but is still shown and still fails under `--strict`. A resource with `deletion_protection` on stays CRITICAL regardless of tags.
+**WARNING (informational by default, blocks with `--fail-on warning`):**
+- Deleting or replacing a stateful resource **only** when it carries an explicit non-production tag (`Environment=dev/test/qa/staging/preview/sandbox/ephemeral`) and is not otherwise protected. Untagged or prod-looking resources stay CRITICAL; a declared dev teardown drops to WARNING so it does not cry wolf, but is still shown. A resource with `deletion_protection` on stays CRITICAL regardless of tags.
 - Deleting or replacing a non-stateful, non-production resource.
 - Opening a non-sensitive port to the world.
 - Granting a wildcard (`*`) IAM action or resource.
+- Cannot verify a security-critical change because the resulting value is computed and unknown at plan time. Covered rules: deletion protection, database public access, S3 public access block, security-group ingress, and IAM policy wildcards.
 
 ## AI-agent detection
 

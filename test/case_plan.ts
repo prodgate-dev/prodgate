@@ -29,6 +29,13 @@ function throwsCode(label: string, fn: () => unknown, code: string) {
     check(label, !!e && e.code === code)
   }
 }
+// Build a one-resource managed plan for focused rule tests.
+function plan1(type: string, name: string, change: any) {
+  return parsePlan(JSON.stringify({ format_version: '1.2', resource_changes: [{ address: `${type}.${name}`, type, name, mode: 'managed', change }] }))
+}
+function hasUnknownWarning(r: { findings: { severity: string; summary: string }[] }): boolean {
+  return r.findings.some(f => f.severity === 'WARNING' && /unknown/i.test(f.summary))
+}
 
 console.log('\nProdgate plan classification')
 console.log('─'.repeat(50))
@@ -132,7 +139,7 @@ console.log('─'.repeat(50))
 // Computed/unknown after values must not crash or false-flag -> pass
 {
   const r = classifyPlan(fixture('computed-unknown-update.json'))
-  check('computed-unknown-update: pass, no false mutation flag', r.verdict === 'pass' && r.findings.length === 0)
+  check('computed-unknown-update: pass, unknown ingress flagged for review', r.verdict === 'pass' && r.stats.criticalCount === 0 && r.findings.length === 1 && /unknown/i.test(r.findings[0].summary))
 }
 
 // Large mixed plan: data source skipped, no-ops ignored, prod replace caught,
@@ -272,6 +279,52 @@ console.log('─'.repeat(50))
 {
   const r = classifyPlan(fixture('db-public-unknown.json'))
   check('db-public-unknown: warning needs-review, not critical', r.verdict === 'pass' && r.stats.criticalCount === 0 && r.findings.some(f => f.type === 'dangerous_mutation' && f.severity === 'WARNING' && /unknown/i.test(f.summary)))
+}
+
+// Every security-critical rule flags an unknown resulting value for review, and does
+// not flag a nearby case where the value is known and safe.
+
+// deletion protection
+{
+  const r = classifyPlan(plan1('aws_db_instance', 'db', { actions: ['update'], before: { deletion_protection: true }, after: { deletion_protection: null }, after_unknown: { deletion_protection: true } }))
+  check('deletion-protection unknown: needs review', hasUnknownWarning(r) && r.stats.criticalCount === 0)
+}
+{
+  const r = classifyPlan(plan1('aws_db_instance', 'db', { actions: ['update'], before: { deletion_protection: true }, after: { deletion_protection: true } }))
+  check('deletion-protection unchanged and known: no finding', r.findings.length === 0)
+}
+
+// S3 public access block
+{
+  const on = { block_public_acls: true, ignore_public_acls: true, block_public_policy: true, restrict_public_buckets: true }
+  const r = classifyPlan(plan1('aws_s3_bucket_public_access_block', 'b', { actions: ['update'], before: on, after: { ...on, block_public_acls: null }, after_unknown: { block_public_acls: true } }))
+  check('s3 pab unknown: needs review', hasUnknownWarning(r) && r.stats.criticalCount === 0)
+}
+{
+  const on = { block_public_acls: true, ignore_public_acls: true, block_public_policy: true, restrict_public_buckets: true }
+  const r = classifyPlan(plan1('aws_s3_bucket_public_access_block', 'b', { actions: ['update'], before: on, after: on }))
+  check('s3 pab unchanged and known: no finding', r.findings.length === 0)
+}
+
+// security group ingress
+{
+  const r = classifyPlan(plan1('aws_security_group', 'sg', { actions: ['update'], before: { ingress: [{ from_port: 443, to_port: 443, protocol: 'tcp', cidr_blocks: ['10.0.0.0/8'] }] }, after: { ingress: null }, after_unknown: { ingress: true } }))
+  check('sg ingress unknown: needs review', hasUnknownWarning(r) && r.stats.criticalCount === 0)
+}
+{
+  const r = classifyPlan(plan1('aws_security_group', 'sg', { actions: ['update'], before: { ingress: [{ from_port: 443, to_port: 443, protocol: 'tcp', cidr_blocks: ['10.0.0.0/8'] }] }, after: { ingress: [{ from_port: 443, to_port: 443, protocol: 'tcp', cidr_blocks: ['10.0.0.0/8'] }] } }))
+  check('sg ingress unchanged internal: no finding', r.findings.length === 0)
+}
+
+// IAM policy
+{
+  const nonWildcard = '{"Statement":[{"Effect":"Allow","Action":"s3:GetObject","Resource":"arn:aws:s3:::b/*"}]}'
+  const r = classifyPlan(plan1('aws_iam_policy', 'p', { actions: ['update'], before: { policy: nonWildcard }, after: { policy: null }, after_unknown: { policy: true } }))
+  check('iam policy unknown: needs review', hasUnknownWarning(r))
+}
+{
+  const r = classifyPlan(plan1('aws_iam_policy', 'p', { actions: ['update'], before: { policy: '{"Statement":[{"Effect":"Allow","Action":"s3:GetObject"}]}' }, after: { policy: '{"Statement":[{"Effect":"Allow","Action":"s3:PutObject"}]}' } }))
+  check('iam policy known non-wildcard: no finding', r.findings.length === 0)
 }
 
 // ── plan input validation (fail closed) ────────────────────────────────────
