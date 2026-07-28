@@ -76,7 +76,7 @@ runs:
     - name: Clear a stale override label after a new commit
       if: ${{ github.event_name == 'pull_request' && github.event.action == 'synchronize' }}
       continue-on-error: true
-      uses: actions/github-script@v9
+      uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
       with:
         github-token: ${{ inputs.github-token }}
         script: |
@@ -114,7 +114,9 @@ runs:
       # command, so a crafted path cannot inject shell.
       run: |
         set +e
-        npx --yes prodgate@^1 check "$PLAN_JSON" \
+        # Run the bundle committed with this action tag, so the tag always runs the
+        # exact engine it shipped with rather than resolving a mutable npm range.
+        node "$GITHUB_ACTION_PATH/action/index.js" check "$PLAN_JSON" \
           --mode "$MODE" \
           --fail-on "$FAIL_ON" \
           --commits-file "$RUNNER_TEMP/prodgate-commits.txt" \
@@ -127,7 +129,7 @@ runs:
       # Fork PRs run with a read-only token; commenting 403s. Do not fail a passing
       # (or failing) verdict on the comment step; the check status is still set below.
       continue-on-error: true
-      uses: actions/github-script@v9
+      uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
       with:
         github-token: ${{ inputs.github-token }}
         script: |

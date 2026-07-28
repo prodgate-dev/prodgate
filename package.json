@@ -1,7 +1,7 @@
 {
   "name": "prodgate",
   "version": "1.0.0",
-  "description": "Block destructive infrastructure changes in CI before they ship",
+  "description": "Block destructive Terraform and OpenTofu changes in CI before they ship. Reads the plan, no cloud credentials.",
   "license": "MIT",
   "main": "dist/cli.js",
   "bin": {
@@ -21,10 +21,17 @@
   "scripts": {
     "prebuild": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
     "build": "tsc",
+    "build:action": "ncc build src/cli.ts -o action --no-source-map-register",
+    "typecheck": "tsc -p tsconfig.check.json",
+    "prepare": "npm run build",
     "prepublishOnly": "npm run build",
     "dev": "ts-node src/cli.ts",
     "pretest": "npm run build",
     "test": "ts-node test/case_plan.ts && ts-node test/cli_test.ts"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
   },
   "keywords": [
     "terraform",
@@ -44,6 +51,7 @@
   },
   "devDependencies": {
     "@types/node": "^25.6.0",
+    "@vercel/ncc": "^0.38.3",
     "ts-node": "^10.9.2",
     "typescript": "^6.0.3"
   }

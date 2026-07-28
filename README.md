@@ -36,11 +36,11 @@ jobs:
   prodgate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 0   # lets Prodgate see commit co-author trailers for agent detection
 
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
 
       # Your existing plan, with your credentials. Prodgate never sees them.
       - name: Terraform plan
