@@ -16,11 +16,13 @@
 import { Command } from 'commander'
 import * as fs from 'fs'
 import * as crypto from 'crypto'
-import { parsePlan } from './plan'
+import { parsePlanFull } from './plan'
 import { detectAgent, AgentMetadata } from './agent'
-import { classifyPlan, Config, EnforcementMode, FailOn } from './classify'
+import { classifyPlan, Config, EnforcementMode, FailOn, PlanResult } from './classify'
 import { POLICY_VERSION } from './resources'
 import { formatHuman, formatGithub } from './output'
+
+const ENGINE_VERSION: string = require('../package.json').version
 
 // Set once per run so config errors can be emitted as JSON alongside plan-input
 // errors. Declared before program.parse so it is initialized when the action runs.
@@ -63,13 +65,16 @@ program
 
     let changes
     let planHash: string
+    let planMeta: { formatVersion?: string; terraformVersion?: string } = {}
     try {
       const text = readTextFile(planPath)
       // Hash the BOM-stripped text so the same logical plan hashes identically
       // regardless of encoding. Approvals can later be tied to this hash.
       const normalized = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text
       planHash = 'sha256:' + crypto.createHash('sha256').update(normalized).digest('hex')
-      changes = parsePlan(text)
+      const parsed = parsePlanFull(text)
+      changes = parsed.changes
+      planMeta = { formatVersion: parsed.formatVersion, terraformVersion: parsed.terraformVersion }
     } catch (e) {
       const err = e as { code?: string; message: string; path?: string }
       if (options.json) {
@@ -106,7 +111,7 @@ program
 
     let output: string
     if (options.json) {
-      output = JSON.stringify(result, null, 2)
+      output = JSON.stringify(buildEnvelope(result, planMeta), null, 2)
     } else if (options.github) {
       output = formatGithub(result)
     } else {
@@ -229,4 +234,44 @@ function computePolicyDigest(mode: EnforcementMode, failOn: FailOn, config?: Con
   const effective = { policyVersion: POLICY_VERSION, mode, failOn, config: config ?? {} }
   const json = JSON.stringify(canonicalize(effective))
   return 'sha256:' + crypto.createHash('sha256').update(json).digest('hex')
+}
+
+// Source metadata, only when running inside GitHub Actions. Omitted for local runs.
+function buildSource(): Record<string, unknown> | undefined {
+  if (process.env.GITHUB_ACTIONS !== 'true') return undefined
+  const src: Record<string, unknown> = {}
+  if (process.env.GITHUB_REPOSITORY) src.repository = process.env.GITHUB_REPOSITORY
+  if (process.env.GITHUB_SHA) src.commitSha = process.env.GITHUB_SHA
+  if (process.env.GITHUB_RUN_ID) src.workflowRunId = process.env.GITHUB_RUN_ID
+  const pr = /refs\/pull\/(\d+)\//.exec(process.env.GITHUB_REF ?? '')
+  if (pr) src.pullRequest = Number(pr[1])
+  return Object.keys(src).length ? src : undefined
+}
+
+// The stable, versioned evaluation envelope emitted by --json. It carries no raw
+// plan values, keeps a deterministic finding order, and separates the policy verdict
+// from the enforcement outcome.
+function buildEnvelope(result: PlanResult, planMeta: { formatVersion?: string; terraformVersion?: string }) {
+  const policy: Record<string, unknown> = { version: POLICY_VERSION, digest: result.policyDigest }
+  if (result.configPath) policy.configPath = result.configPath
+  const envelope: Record<string, unknown> = {
+    schemaVersion: '1.0',
+    engine: { name: 'prodgate', version: ENGINE_VERSION },
+    policy,
+    plan: { formatVersion: planMeta.formatVersion, terraformVersion: planMeta.terraformVersion, hash: result.planHash },
+    enforcement: {
+      mode: result.enforcementMode,
+      failOn: result.failOn,
+      policyVerdict: result.policyVerdict,
+      wouldBlock: result.wouldBlock,
+    },
+    verdict: result.verdict,
+    stats: result.stats,
+    findings: result.findings,
+    disruptions: result.disruptions,
+    suppressions: result.suppressions,
+  }
+  const source = buildSource()
+  if (source) envelope.source = source
+  return envelope
 }

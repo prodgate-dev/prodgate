@@ -115,7 +115,20 @@ function validatePlanDoc(doc: any): void {
   }
 }
 
+export type ParsedPlan = {
+  changes: ResourceChange[]
+  formatVersion?: string
+  terraformVersion?: string
+}
+
+// Parses and validates the plan once, returning the changes plus the plan metadata
+// the evaluation envelope needs. parsePlan wraps this for callers that only want the
+// changes.
 export function parsePlan(json: string): ResourceChange[] {
+  return parsePlanFull(json).changes
+}
+
+export function parsePlanFull(json: string): ParsedPlan {
   let doc: any
   try {
     // Strip a leading byte-order mark. Windows tooling (PowerShell redirects,
@@ -183,5 +196,9 @@ export function parsePlan(json: string): ResourceChange[] {
     })
   }
 
-  return out
+  return {
+    changes: out,
+    formatVersion: typeof doc.format_version === 'string' ? doc.format_version : undefined,
+    terraformVersion: typeof doc.terraform_version === 'string' ? doc.terraform_version : undefined,
+  }
 }

@@ -39,7 +39,7 @@ function writeTmpBuffer(buf: Buffer): string {
   return p
 }
 function digestOf(args: string[]): string {
-  try { return JSON.parse(run(['check', fixture('create-only.json'), '--json', ...args]).stdout).policyDigest } catch { return '' }
+  try { return JSON.parse(run(['check', fixture('create-only.json'), '--json', ...args]).stdout).policy.digest } catch { return '' }
 }
 
 console.log('\nProdgate CLI behavior')
@@ -77,7 +77,14 @@ check('json envelope separates policy verdict from mode', (() => {
   const r = run(['check', fixture('delete-db.json'), '--json'])
   try {
     const o = JSON.parse(r.stdout)
-    return r.code === 1 && o.policyVerdict === 'fail' && o.enforcementMode === 'enforce' && o.wouldBlock === true && typeof o.policyDigest === 'string'
+    return r.code === 1 && o.enforcement.policyVerdict === 'fail' && o.enforcement.mode === 'enforce' && o.enforcement.wouldBlock === true && typeof o.policy.digest === 'string'
+  } catch { return false }
+})())
+check('json envelope has schema, engine, and plan metadata', (() => {
+  const r = run(['check', fixture('delete-db.json'), '--json'])
+  try {
+    const o = JSON.parse(r.stdout)
+    return o.schemaVersion === '1.0' && o.engine.name === 'prodgate' && typeof o.engine.version === 'string' && typeof o.plan.hash === 'string' && o.plan.formatVersion === '1.2'
   } catch { return false }
 })())
 check('github output is markdown with no ANSI', (() => {
@@ -96,7 +103,7 @@ check('audit json reports wouldBlock without failing', (() => {
   const r = run(['check', fixture('delete-db.json'), '--mode', 'audit', '--json'])
   try {
     const o = JSON.parse(r.stdout)
-    return r.code === 0 && o.policyVerdict === 'fail' && o.wouldBlock === true && o.verdict === 'pass'
+    return r.code === 0 && o.enforcement.policyVerdict === 'fail' && o.enforcement.wouldBlock === true && o.verdict === 'pass'
   } catch { return false }
 })())
 
@@ -117,7 +124,7 @@ check('audit json reports wouldBlock without failing', (() => {
   const cfg = writeTmp('{"schemaVersion":1,"ignore":["module.x.*"]}')
   const jr = run(['check', fixture('create-only.json'), '--config', cfg, '--json'])
   let jsonHasPath = false
-  try { jsonHasPath = JSON.parse(jr.stdout).configPath === cfg } catch { jsonHasPath = false }
+  try { jsonHasPath = JSON.parse(jr.stdout).policy.configPath === cfg } catch { jsonHasPath = false }
   check('json contains configPath', jsonHasPath)
   check('human prints the config path', run(['check', fixture('create-only.json'), '--config', cfg]).stdout.includes(cfg))
 }

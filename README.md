@@ -128,19 +128,44 @@ Zero-config by default. For overrides, add `prodgate.config.json`:
 
 ```json
 {
+  "schemaVersion": 1,
+  "mode": "enforce",
+  "failOn": "critical",
   "ignore": ["module.sandbox.*"],
-  "allowDestroy": ["aws_db_instance.scratch"]
+  "allowDestruction": ["aws_db_instance.scratch"]
 }
 ```
 
+`mode` is `enforce` or `audit`. `failOn` is `critical`, `warning`, or `never`. `ignore` skips resources entirely; `allowDestruction` suppresses only the destruction finding for a resource, not exposure findings on its recreate.
+
 | Flag | Description |
 |------|-------------|
-| `--json` | Output raw JSON |
+| `--json` | Output the JSON evaluation envelope |
 | `--github` | Output GitHub markdown for PR comments |
 | `--output <file>` | Write output to a file |
-| `--strict` | Also fail on warnings |
+| `--mode <mode>` | `audit` or `enforce` (default `enforce`) |
+| `--fail-on <level>` | `critical`, `warning`, or `never` (default `critical`) |
 | `--approved` | Treat the change as human-approved |
 | `--config <file>` | Path to `prodgate.config.json` |
+
+## JSON output
+
+`--json` emits a stable, versioned envelope for integrations. It never includes raw plan values, keeps a deterministic finding order, and separates the policy verdict from the enforcement outcome:
+
+```json
+{
+  "schemaVersion": "1.0",
+  "engine": { "name": "prodgate", "version": "1.0.0" },
+  "policy": { "version": "aws-default-v1", "digest": "sha256:..." },
+  "plan": { "formatVersion": "1.2", "terraformVersion": "1.9.5", "hash": "sha256:..." },
+  "enforcement": { "mode": "enforce", "failOn": "critical", "policyVerdict": "fail", "wouldBlock": true },
+  "verdict": "fail",
+  "stats": { "resourcesScanned": 9, "created": 6, "updated": 2, "replaced": 0, "destroyed": 1, "criticalCount": 1, "warningCount": 0 },
+  "findings": [{ "ruleId": "PG-DESTROY-STATEFUL", "severity": "CRITICAL", "category": "data_loss", "confidence": "high", "resource": { "address": "aws_db_instance.main", "type": "aws_db_instance" }, "action": "delete", "evidence": [{ "field": "change.actions", "observed": "delete" }] }]
+}
+```
+
+An invalid plan or config instead prints `{ "error": { "code": "...", "message": "..." } }` and exits 2. Under GitHub Actions the envelope also carries a `source` block (repository, commit, workflow run, pull request).
 
 ## Trust boundary
 
