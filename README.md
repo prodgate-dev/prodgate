@@ -10,6 +10,18 @@ Prodgate reads a Terraform/OpenTofu plan and fails the build when a change would
 
 It works out of the box with no rules to write, and it reads the plan as a file: it never runs Terraform and never needs your cloud credentials.
 
+## Quickstart
+
+1. Try it locally against a real plan:
+   ```bash
+   terraform show -json plan.tfplan > plan.json
+   npx prodgate check plan.json
+   ```
+2. Add the Action to your pull-request workflow (see below).
+3. Run it in **audit mode** for a week (`mode: audit`): it reports what it would block without failing the build.
+4. Review the findings. If it is quiet and accurate, remove the `mode: audit` line to enforce.
+5. From then on, a critical finding fails the check until a reviewer adds the `prodgate-approved` label.
+
 ## Why
 
 A common, dangerous PR drops a production database, replaces a volume, disables deletion protection, or opens a security group to the world. In a diff it can look routine, and it shows up increasingly often in AI-generated changes. Prodgate turns that into a failed check with a recorded manual override.
