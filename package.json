@@ -23,7 +23,8 @@
     "build": "tsc",
     "prepublishOnly": "npm run build",
     "dev": "ts-node src/cli.ts",
-    "test": "ts-node test/case_plan.ts"
+    "pretest": "npm run build",
+    "test": "ts-node test/case_plan.ts && ts-node test/cli_test.ts"
   },
   "keywords": [
     "terraform",
