@@ -74,7 +74,7 @@ export type MutationMatch = { severity: Severity; summary: string; attribute: st
 export type DangerousRule = {
   id: string
   appliesTo: (type: string) => boolean
-  evaluate: (before: any, after: any) => MutationMatch | null
+  evaluate: (before: any, after: any, afterUnknown: any) => MutationMatch | null
 }
 
 // ---- helpers for the security-group rules ----
@@ -155,11 +155,18 @@ export const DANGEROUS_MUTATIONS: DangerousRule[] = [
     id: 'database-made-public',
     appliesTo: (t) => t === 'aws_db_instance' || t === 'aws_rds_cluster' || t === 'aws_rds_cluster_instance',
     // Dangerous whenever the resulting state is public and it was not already:
-    // fires on an update (false -> true) and on a create (no prior state).
-    evaluate: (b, a) =>
-      a && a.publicly_accessible === true && b?.publicly_accessible !== true
-        ? { severity: 'CRITICAL', summary: 'makes a database publicly accessible', attribute: 'publicly_accessible' }
-        : null,
+    // fires on an update (false -> true) and on a create (no prior state). When the
+    // resulting value is computed and unknown at plan time, we cannot confirm the
+    // database stays private, so flag it for review rather than assume it is safe.
+    evaluate: (b, a, au) => {
+      if (a && a.publicly_accessible === true && b?.publicly_accessible !== true) {
+        return { severity: 'CRITICAL', summary: 'makes a database publicly accessible', attribute: 'publicly_accessible' }
+      }
+      if (au?.publicly_accessible === true && b?.publicly_accessible !== true) {
+        return { severity: 'WARNING', summary: 'resulting publicly_accessible is unknown at plan time; cannot confirm the database stays private (needs review)', attribute: 'publicly_accessible' }
+      }
+      return null
+    },
   },
   {
     id: 's3-public-access-block-weakened',

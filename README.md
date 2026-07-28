@@ -53,6 +53,11 @@ jobs:
         uses: prodgate-dev/prodgate@v1
         with:
           plan-json: plan.json
+
+      # A plan can contain secrets in plaintext. Remove it once Prodgate has read it.
+      - name: Remove plan file
+        if: always()
+        run: rm -f plan.json plan.tfplan
 ```
 
 On every PR, Prodgate posts a one-line plan summary (what the change adds, changes, replaces, and destroys), so the check is useful even when nothing is wrong. On a destructive or dangerous change, it fails the check and posts the detail. A human approves by adding the **`prodgate-approved`** label (GitHub records who and when); re-run the check and the gate passes.
@@ -80,6 +85,15 @@ Plan summary: 0 to add, 0 to change, 1 to destroy
 ──────────────────────────────────────────────────
 Verdict: FAIL
 ```
+
+## Sensitive plan data
+
+A Terraform plan can contain secrets in plaintext (passwords, keys, tokens), even when the normal `terraform plan` output marks those values as sensitive. Prodgate reads the plan locally, never uploads it, and its reports omit resource values by default. To keep the plan file itself safe:
+
+- Do not commit `plan.json` to the repository (add it to `.gitignore`).
+- Do not print the full plan JSON to public CI logs.
+- Restrict access to any CI artifact that contains a plan, and keep its retention short.
+- Remove the plan file after the check runs, as the example workflow does.
 
 ## What Prodgate flags
 

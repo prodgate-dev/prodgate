@@ -21,6 +21,10 @@ export type ResourceChange = {
   actions: TfAction[]
   before: any
   after: any
+  // Terraform's after_unknown mirrors after with `true` where a value is computed
+  // and not known at plan time. A rule that depends on such a field cannot assert
+  // the resulting state is safe.
+  afterUnknown: any
   changeKind: ChangeKind
   // Tags are kept per side. A replace destroys the object described by `before`
   // and creates the one described by `after`, and those can carry different
@@ -144,6 +148,7 @@ export function parsePlan(json: string): ResourceChange[] {
       actions,
       before: change.before ?? null,
       after: change.after ?? null,
+      afterUnknown: change.after_unknown ?? null,
       changeKind: deriveChangeKind(actions),
       beforeTags: extractTagsFrom(change.before),
       afterTags: extractTagsFrom(change.after),

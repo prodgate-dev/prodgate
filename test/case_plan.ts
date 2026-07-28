@@ -246,6 +246,15 @@ console.log('─'.repeat(50))
   check('agent: dependabot[bot] not an AI agent', detectAgent({ author: 'dependabot[bot]' }).likelyAgent === false)
 }
 
+// ── unknown / computed values ──────────────────────────────────────────────
+
+// A database whose resulting publicly_accessible is unknown at plan time cannot be
+// confirmed safe, so it is flagged for review as a WARNING, never asserted safe.
+{
+  const r = classifyPlan(fixture('db-public-unknown.json'))
+  check('db-public-unknown: warning needs-review, not critical', r.verdict === 'pass' && r.stats.criticalCount === 0 && r.findings.some(f => f.type === 'dangerous_mutation' && f.severity === 'WARNING' && /unknown/i.test(f.summary)))
+}
+
 // ── plan input validation (fail closed) ────────────────────────────────────
 
 throwsCode('empty object rejected', () => parsePlan('{}'), 'UNRECOGNIZED_DOCUMENT')
