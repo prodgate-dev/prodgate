@@ -327,6 +327,28 @@ console.log('─'.repeat(50))
   check('iam policy known non-wildcard: no finding', r.findings.length === 0)
 }
 
+// Nested and list-shaped unknowns inside the relevant subtree are detected.
+{
+  const internal = { from_port: 443, to_port: 443, protocol: 'tcp', cidr_blocks: ['10.0.0.0/8'] }
+  const r = classifyPlan(plan1('aws_security_group', 'sg', { actions: ['update'], before: { ingress: [internal] }, after: { ingress: [{ ...internal, cidr_blocks: null }] }, after_unknown: { ingress: [{ cidr_blocks: [true] }] } }))
+  check('sg nested unknown cidr in ingress: needs review', hasUnknownWarning(r) && r.stats.criticalCount === 0)
+}
+{
+  const r = classifyPlan(plan1('aws_security_group_rule', 'r', { actions: ['update'], before: { type: 'ingress', cidr_blocks: ['10.0.0.0/8'] }, after: { type: 'ingress', cidr_blocks: ['10.0.0.0/8', null] }, after_unknown: { cidr_blocks: [false, true] } }))
+  check('sg rule partially unknown cidr list: needs review', hasUnknownWarning(r) && r.stats.criticalCount === 0)
+}
+
+// Unknowns unrelated to a security rule must not warn.
+{
+  const r = classifyPlan(plan1('aws_db_instance', 'db', { actions: ['update'], before: { publicly_accessible: false }, after: { publicly_accessible: false, arn: null }, after_unknown: { arn: true } }))
+  check('unrelated unknown (arn): no finding', r.findings.length === 0)
+}
+{
+  const internal = { from_port: 443, to_port: 443, protocol: 'tcp', cidr_blocks: ['10.0.0.0/8'], description: 'web' }
+  const r = classifyPlan(plan1('aws_security_group', 'sg', { actions: ['update'], before: { ingress: [internal] }, after: { ingress: [{ ...internal, description: null }] }, after_unknown: { ingress: [{ description: [true] }] } }))
+  check('sg unknown non-cidr field in ingress: no finding', r.findings.length === 0)
+}
+
 // ── plan input validation (fail closed) ────────────────────────────────────
 
 throwsCode('empty object rejected', () => parsePlan('{}'), 'UNRECOGNIZED_DOCUMENT')

@@ -25,28 +25,28 @@ export type StatefulInfo = { category: string; defaultSeverity: 'CRITICAL'; rati
 // tags. Whether recovery is possible depends on backups, snapshots, or versioning
 // that the plan cannot see, so these are critical by default. Each entry records why.
 export const STATEFUL_RESOURCES: Record<string, StatefulInfo> = {
-  aws_db_instance: { category: 'database', defaultSeverity: 'CRITICAL', rationale: 'Deleting the instance destroys its database storage unless a final snapshot is taken.' },
-  aws_rds_cluster: { category: 'database', defaultSeverity: 'CRITICAL', rationale: 'The cluster owns the storage volume, so destroying it destroys the database data unless a final snapshot is taken.' },
-  aws_rds_global_cluster: { category: 'database', defaultSeverity: 'CRITICAL', rationale: 'Removing the global cluster tears down its regional storage.' },
-  aws_docdb_cluster: { category: 'database', defaultSeverity: 'CRITICAL', rationale: 'The cluster holds the document storage, so destroying it destroys the data.' },
-  aws_neptune_cluster: { category: 'database', defaultSeverity: 'CRITICAL', rationale: 'The cluster holds the graph storage, so destroying it destroys the data.' },
-  aws_redshift_cluster: { category: 'database', defaultSeverity: 'CRITICAL', rationale: 'The cluster holds the warehouse storage, so destroying it destroys the data unless a final snapshot is taken.' },
-  aws_elasticache_cluster: { category: 'cache', defaultSeverity: 'CRITICAL', rationale: 'Destroying the cache node group discards its in-memory data.' },
-  aws_elasticache_replication_group: { category: 'cache', defaultSeverity: 'CRITICAL', rationale: 'Destroying the replication group discards its in-memory data.' },
-  aws_dynamodb_table: { category: 'database', defaultSeverity: 'CRITICAL', rationale: 'Deleting the table deletes all items unless point-in-time recovery is used to restore them.' },
-  aws_timestreamwrite_database: { category: 'database', defaultSeverity: 'CRITICAL', rationale: 'Deleting the database deletes its tables and time-series data.' },
-  aws_timestreamwrite_table: { category: 'database', defaultSeverity: 'CRITICAL', rationale: 'Deleting the table deletes its time-series records.' },
-  aws_qldb_ledger: { category: 'database', defaultSeverity: 'CRITICAL', rationale: 'Deleting the ledger destroys its journal and tables.' },
-  aws_s3_bucket: { category: 'object-store', defaultSeverity: 'CRITICAL', rationale: 'Deleting the bucket removes its objects unless versioning or replication preserved copies.' },
-  aws_ebs_volume: { category: 'volume', defaultSeverity: 'CRITICAL', rationale: 'Deleting the volume destroys the block data on it unless a snapshot exists.' },
-  aws_efs_file_system: { category: 'filesystem', defaultSeverity: 'CRITICAL', rationale: 'Deleting the file system destroys the files stored on it unless a backup exists.' },
-  aws_fsx_lustre_file_system: { category: 'filesystem', defaultSeverity: 'CRITICAL', rationale: 'Deleting the file system destroys the data on it unless a backup exists.' },
-  aws_glacier_vault: { category: 'archive', defaultSeverity: 'CRITICAL', rationale: 'Deleting the vault destroys the archives stored in it.' },
-  aws_route53_zone: { category: 'dns', defaultSeverity: 'CRITICAL', rationale: 'Deleting the zone removes its DNS records and can break resolution for the domain.' },
-  aws_kms_key: { category: 'kms', defaultSeverity: 'CRITICAL', rationale: 'Scheduling the key for deletion makes data encrypted under it unrecoverable.' },
-  aws_secretsmanager_secret: { category: 'secret', defaultSeverity: 'CRITICAL', rationale: 'Deleting the secret removes the stored secret material.' },
-  aws_cloudwatch_log_group: { category: 'logs', defaultSeverity: 'CRITICAL', rationale: 'Deleting the log group deletes its retained log data.' },
-  aws_ecr_repository: { category: 'registry', defaultSeverity: 'CRITICAL', rationale: 'Deleting the repository deletes the container images stored in it.' },
+  aws_db_instance: { category: 'database', defaultSeverity: 'CRITICAL', rationale: 'the instance holds the database storage' },
+  aws_rds_cluster: { category: 'database', defaultSeverity: 'CRITICAL', rationale: 'the cluster owns the storage volume for the database' },
+  aws_rds_global_cluster: { category: 'database', defaultSeverity: 'CRITICAL', rationale: 'the global cluster spans the regional database storage' },
+  aws_docdb_cluster: { category: 'database', defaultSeverity: 'CRITICAL', rationale: 'the cluster holds the document storage' },
+  aws_neptune_cluster: { category: 'database', defaultSeverity: 'CRITICAL', rationale: 'the cluster holds the graph storage' },
+  aws_redshift_cluster: { category: 'database', defaultSeverity: 'CRITICAL', rationale: 'the cluster holds the warehouse storage' },
+  aws_elasticache_cluster: { category: 'cache', defaultSeverity: 'CRITICAL', rationale: 'the node group holds in-memory data' },
+  aws_elasticache_replication_group: { category: 'cache', defaultSeverity: 'CRITICAL', rationale: 'the replication group holds in-memory data' },
+  aws_dynamodb_table: { category: 'database', defaultSeverity: 'CRITICAL', rationale: 'the table holds its items' },
+  aws_timestreamwrite_database: { category: 'database', defaultSeverity: 'CRITICAL', rationale: 'the database holds its tables and time-series data' },
+  aws_timestreamwrite_table: { category: 'database', defaultSeverity: 'CRITICAL', rationale: 'the table holds its time-series records' },
+  aws_qldb_ledger: { category: 'database', defaultSeverity: 'CRITICAL', rationale: 'the ledger holds its journal and tables' },
+  aws_s3_bucket: { category: 'object-store', defaultSeverity: 'CRITICAL', rationale: 'the bucket holds its objects' },
+  aws_ebs_volume: { category: 'volume', defaultSeverity: 'CRITICAL', rationale: 'the volume holds block data' },
+  aws_efs_file_system: { category: 'filesystem', defaultSeverity: 'CRITICAL', rationale: 'the file system holds its files' },
+  aws_fsx_lustre_file_system: { category: 'filesystem', defaultSeverity: 'CRITICAL', rationale: 'the file system holds its data' },
+  aws_glacier_vault: { category: 'archive', defaultSeverity: 'CRITICAL', rationale: 'the vault holds its archives' },
+  aws_route53_zone: { category: 'dns', defaultSeverity: 'CRITICAL', rationale: 'the zone holds its DNS records and removing it can break resolution for the domain' },
+  aws_kms_key: { category: 'kms', defaultSeverity: 'CRITICAL', rationale: 'data encrypted under this key depends on it remaining available' },
+  aws_secretsmanager_secret: { category: 'secret', defaultSeverity: 'CRITICAL', rationale: 'the secret holds its stored material' },
+  aws_cloudwatch_log_group: { category: 'logs', defaultSeverity: 'CRITICAL', rationale: 'the log group holds retained log data' },
+  aws_ecr_repository: { category: 'registry', defaultSeverity: 'CRITICAL', rationale: 'the repository holds its container images' },
 }
 
 export type DisruptiveInfo = { category: string }
@@ -144,11 +144,35 @@ function iamHasWildcard(policy: any): boolean {
 // ---- shared unknown-value handling ----
 
 // afterUnknown mirrors after with `true` where a value is computed and not known at
-// plan time. When a security-critical field is unknown, a rule cannot prove the
-// resulting state is safe, so it flags it for review with one standard WARNING.
+// plan time. An unknown can sit at the root of an attribute (`ingress: true`) or
+// nested inside a collection (`ingress: [{ cidr_blocks: [true] }]`), so detection
+// walks the attribute's subtree rather than only checking the root value.
+function hasUnknownWithin(node: any): boolean {
+  if (node === true) return true
+  if (Array.isArray(node)) return node.some(hasUnknownWithin)
+  if (node && typeof node === 'object') return Object.values(node).some(hasUnknownWithin)
+  return false
+}
+// Scoped to the named attributes so an unknown value elsewhere in the plan (an ARN,
+// a timestamp) never trips a security rule.
 function anyUnknown(afterUnknown: any, attrs: string[]): boolean {
   if (!afterUnknown || typeof afterUnknown !== 'object') return false
-  return attrs.some(a => afterUnknown[a] === true)
+  return attrs.some(a => hasUnknownWithin(afterUnknown[a]))
+}
+
+// Security-group world-openness is decided by CIDR values, so only an unknown CIDR
+// (top-level for single-rule resources, or nested in an ingress rule) is
+// indeterminate. An unknown description or other field inside ingress is not.
+const SG_CIDR_KEYS = ['cidr_blocks', 'cidr_ipv4', 'ipv6_cidr_blocks', 'cidr_ipv6']
+function ingressCidrUnknown(afterUnknown: any): boolean {
+  if (!afterUnknown || typeof afterUnknown !== 'object') return false
+  if (SG_CIDR_KEYS.some(k => hasUnknownWithin(afterUnknown[k]))) return true
+  const ing = afterUnknown.ingress
+  if (ing === true) return true
+  if (Array.isArray(ing)) {
+    return ing.some(r => r && typeof r === 'object' && SG_CIDR_KEYS.some(k => hasUnknownWithin(r[k])))
+  }
+  return false
 }
 function indeterminate(attribute: string, what: string): MutationMatch {
   return {
@@ -231,9 +255,9 @@ export const DANGEROUS_MUTATIONS: DangerousRule[] = [
           }
         }
       }
-      // ingress is computed and unknown, and it was not already world-open: we cannot
-      // confirm the resulting rules do not open it to the world.
-      if (anyUnknown(au, ['ingress', 'cidr_blocks', 'cidr_ipv4', 'ipv6_cidr_blocks', 'cidr_ipv6']) && openWorldRanges(b).length === 0) {
+      // an ingress CIDR is computed and unknown, and it was not already world-open: we
+      // cannot confirm the resulting rules do not open it to the world.
+      if (ingressCidrUnknown(au) && openWorldRanges(b).length === 0) {
         return indeterminate('ingress', 'security group ingress')
       }
       return null

@@ -14,7 +14,8 @@ export function isStateful(rc: ResourceChange): boolean {
 }
 
 export function statefulRationale(rc: ResourceChange): string {
-  return STATEFUL_RESOURCES[rc.type]?.rationale ?? 'Destroying this resource can cause data loss.'
+  const specific = STATEFUL_RESOURCES[rc.type]?.rationale ?? 'this resource holds data'
+  return `may cause data loss (${specific}); recovery depends on snapshots, backups, replication, retention, or versioning that Prodgate cannot verify from this plan`
 }
 
 export function isDisruptiveReplace(rc: ResourceChange): boolean {

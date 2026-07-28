@@ -3,7 +3,7 @@
  *
  * Formats a PlanResult for humans and for GitHub PR comments. It opens with a
  * one-line plan summary so the check is useful on every PR, then leads with the
- * irreversible or dangerous changes and never buries the signal.
+ * destructive or dangerous changes and never buries the signal.
  */
 
 import { PlanResult, PlanFinding } from './classify'
