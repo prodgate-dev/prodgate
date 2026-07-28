@@ -13,6 +13,10 @@
  * AWS-first for v1. Other providers are added by extending these tables.
  */
 
+// The named version of the built-in rule set. Bump it when the tables below change
+// in a way that alters verdicts, so a policy digest identifies the exact rules.
+export const POLICY_VERSION = 'aws-default-v1'
+
 export type Severity = 'CRITICAL' | 'WARNING' | 'INFO'
 
 export type StatefulInfo = { category: string }

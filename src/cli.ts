@@ -18,8 +18,13 @@ import * as fs from 'fs'
 import * as crypto from 'crypto'
 import { parsePlan } from './plan'
 import { detectAgent, AgentMetadata } from './agent'
-import { classifyPlan, Config } from './classify'
+import { classifyPlan, Config, EnforcementMode, FailOn } from './classify'
+import { POLICY_VERSION } from './resources'
 import { formatHuman, formatGithub } from './output'
+
+// Set once per run so config errors can be emitted as JSON alongside plan-input
+// errors. Declared before program.parse so it is initialized when the action runs.
+let emitErrorsAsJson = false
 
 const program = new Command()
 
@@ -35,7 +40,9 @@ program
   .option('--json', 'Output raw JSON')
   .option('--github', 'Output GitHub-flavored markdown for PR comments')
   .option('--output <file>', 'Write output to a file')
-  .option('--strict', 'Also fail on warnings')
+  .option('--mode <mode>', 'Enforcement mode: audit or enforce (default enforce)')
+  .option('--fail-on <level>', 'Block on: critical, warning, or never (default critical)')
+  .option('--strict', 'Deprecated alias for --fail-on warning')
   .option('--color', 'Force ANSI color in the report even when output is not a terminal')
   .option('--approved', 'Treat the change as human-approved (gate passes; findings still reported)')
   .option('--config <file>', 'Path to prodgate.config.json')
@@ -44,8 +51,13 @@ program
   .option('--commits-file <file>', 'File of commit messages (for agent detection)')
   .option('--pr-body-file <file>', 'File containing the PR body (for agent detection)')
   .action((planPath, options) => {
+    emitErrorsAsJson = !!options.json
     if (!fs.existsSync(planPath)) {
-      console.error(`Plan file not found: ${planPath}`)
+      if (options.json) {
+        console.log(JSON.stringify({ error: { code: 'PLAN_NOT_FOUND', message: `Plan file not found: ${planPath}` } }, null, 2))
+      } else {
+        console.error(`Plan file not found: ${planPath}`)
+      }
       process.exit(2)
     }
 
@@ -77,8 +89,15 @@ program
     const agent = detectAgent(meta)
     const approved = !!options.approved || process.env.PRODGATE_APPROVED === 'true'
     const config = loadConfig(options.config)
+    const configPath = config ? (options.config ?? 'prodgate.config.json') : undefined
 
-    const result = classifyPlan(changes, { agent, approved, strict: !!options.strict, config, planHash })
+    // Effective mode/failOn: an explicit flag wins over the config file, which wins
+    // over the defaults. Enforce and critical are the defaults, so the gate gates.
+    const mode = resolveMode(options.mode, config)
+    const failOn = resolveFailOn(options.failOn, !!options.strict, config)
+    const policyDigest = computePolicyDigest(mode, failOn, config)
+
+    const result = classifyPlan(changes, { agent, approved, mode, failOn, config, planHash, configPath, policyDigest })
 
     // Color the terminal report only, and never the GitHub or JSON output. Default
     // to a TTY that is not being redirected to a file; NO_COLOR disables it, and
@@ -132,7 +151,11 @@ function readMaybe(p?: string): string | undefined {
 }
 
 function configError(message: string): never {
-  console.error('Invalid prodgate config: ' + message)
+  if (emitErrorsAsJson) {
+    console.log(JSON.stringify({ error: { code: 'INVALID_CONFIG', message } }, null, 2))
+  } else {
+    console.error('Invalid prodgate config: ' + message)
+  }
   process.exit(2)
 }
 
@@ -170,4 +193,40 @@ function loadConfig(p?: string): Config | undefined {
     if (raw[key] !== undefined && !isNonEmptyStringArray(raw[key])) configError(`${target}: ${key} must be an array of non-empty strings`)
   }
   return raw as Config
+}
+
+function resolveMode(flag: string | undefined, config?: Config): EnforcementMode {
+  const v = flag ?? config?.mode ?? 'enforce'
+  if (v !== 'audit' && v !== 'enforce') {
+    console.error(`Invalid --mode "${v}" (expected "audit" or "enforce").`)
+    process.exit(2)
+  }
+  return v
+}
+
+function resolveFailOn(flag: string | undefined, strict: boolean, config?: Config): FailOn {
+  const v = flag ?? config?.failOn ?? (strict ? 'warning' : 'critical')
+  if (v !== 'critical' && v !== 'warning' && v !== 'never') {
+    console.error(`Invalid --fail-on "${v}" (expected "critical", "warning", or "never").`)
+    process.exit(2)
+  }
+  return v
+}
+
+// Sort object keys recursively so the digest depends on values, not key order or
+// whitespace. Lets a future central policy be identified by the same digest.
+function canonicalize(v: any): any {
+  if (Array.isArray(v)) return v.map(canonicalize)
+  if (v && typeof v === 'object') {
+    const out: Record<string, any> = {}
+    for (const k of Object.keys(v).sort()) out[k] = canonicalize(v[k])
+    return out
+  }
+  return v
+}
+
+function computePolicyDigest(mode: EnforcementMode, failOn: FailOn, config?: Config): string {
+  const effective = { policyVersion: POLICY_VERSION, mode, failOn, config: config ?? {} }
+  const json = JSON.stringify(canonicalize(effective))
+  return 'sha256:' + crypto.createHash('sha256').update(json).digest('hex')
 }

@@ -55,6 +55,14 @@ function suppressionNotes(result: PlanResult): string[] {
       : `Destruction of \`${s.address}\` allowed by an exception.`)
 }
 
+// In audit mode a would-be block does not fail the build, so the report must say so
+// conspicuously rather than read as a plain pass.
+function auditBannerText(result: PlanResult): string | null {
+  return result.enforcementMode === 'audit' && result.wouldBlock
+    ? 'AUDIT MODE: this plan would have been blocked in enforcement mode.'
+    : null
+}
+
 function actionVerb(f: PlanFinding): string {
   return f.action.toUpperCase()
 }
@@ -77,6 +85,12 @@ export function formatHuman(result: PlanResult, opts: { color?: boolean } = {}):
   lines.push(BAR)
   lines.push(`Resources scanned: ${s.resourcesScanned}`)
   lines.push(`Plan summary: ${planSummary(result)}`)
+
+  const humanBanner = auditBannerText(result)
+  if (humanBanner) {
+    lines.push('')
+    lines.push(c.yellow('[AUDIT MODE] ' + humanBanner.replace(/^AUDIT MODE: /, '')))
+  }
 
   if (criticals.length > 0) {
     lines.push('')
@@ -123,9 +137,14 @@ export function formatHuman(result: PlanResult, opts: { color?: boolean } = {}):
 
   lines.push('')
   lines.push(BAR)
-  const verdict = result.verdict === 'pass' ? c.green('PASS') : c.red('FAIL')
+  const verdict = auditBannerText(result)
+    ? c.yellow('AUDIT (would block)')
+    : result.verdict === 'pass' ? c.green('PASS') : c.red('FAIL')
   lines.push(`Verdict: ${verdict}${result.approved && result.verdict === 'pass' && (criticals.length || warnings.length) ? ' (approved)' : ''}`)
+  lines.push(`Mode: ${result.enforcementMode}, fail-on: ${result.failOn}`)
+  if (result.configPath) lines.push(`Config: ${result.configPath}`)
   if (result.planHash) lines.push(`Plan hash: ${result.planHash}`)
+  if (result.policyDigest) lines.push(`Policy digest: ${result.policyDigest}`)
   lines.push('')
   return lines.join('\n')
 }
@@ -134,11 +153,17 @@ export function formatGithub(result: PlanResult): string {
   const lines: string[] = []
   const criticals = result.findings.filter(f => f.severity === 'CRITICAL')
   const warnings = result.findings.filter(f => f.severity === 'WARNING')
-  const verdict = result.verdict === 'pass' ? 'PASS' : 'FAIL'
+  const banner = auditBannerText(result)
+  const headline = banner ? 'AUDIT — would block' : result.verdict === 'pass' ? 'PASS' : 'FAIL'
 
-  lines.push(`## Prodgate Infrastructure Change Check: ${verdict}`)
+  lines.push(`## Prodgate Infrastructure Change Check: ${headline}`)
   lines.push('')
   lines.push(`**Plan summary:** ${planSummary(result)}.`)
+
+  if (banner) {
+    lines.push('')
+    lines.push(`> **${banner}**`)
+  }
 
   if (result.agent.likelyAgent) {
     lines.push('')
@@ -183,10 +208,11 @@ export function formatGithub(result: PlanResult): string {
     lines.push('To approve: add the `prodgate-approved` label to this PR, then re-run the check.')
   }
 
-  if (result.planHash) {
-    lines.push('')
-    lines.push(`<sub>Plan hash: \`${result.planHash}\`</sub>`)
-  }
+  const footer: string[] = [`mode: ${result.enforcementMode}`, `fail-on: ${result.failOn}`]
+  if (result.planHash) footer.push(`plan hash: \`${result.planHash}\``)
+  if (result.policyDigest) footer.push(`policy digest: \`${result.policyDigest}\``)
+  lines.push('')
+  lines.push(`<sub>${footer.join(' | ')}</sub>`)
 
   return lines.join('\n')
 }

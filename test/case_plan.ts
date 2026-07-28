@@ -246,6 +246,25 @@ console.log('─'.repeat(50))
   check('agent: dependabot[bot] not an AI agent', detectAgent({ author: 'dependabot[bot]' }).likelyAgent === false)
 }
 
+// ── enforcement mode and failOn ────────────────────────────────────────────
+
+{
+  const r = classifyPlan(fixture('delete-db.json'), { mode: 'enforce', failOn: 'critical' })
+  check('enforce + critical: blocks', r.verdict === 'fail' && r.policyVerdict === 'fail' && r.wouldBlock === true && r.enforcementMode === 'enforce')
+}
+{
+  const r = classifyPlan(fixture('delete-db.json'), { mode: 'audit', failOn: 'critical' })
+  check('audit + critical: does not block but wouldBlock', r.verdict === 'pass' && r.policyVerdict === 'fail' && r.wouldBlock === true && r.enforcementMode === 'audit')
+}
+{
+  const r = classifyPlan(fixture('delete-db.json'), { failOn: 'never' })
+  check('failOn never: a critical does not fail the policy', r.policyVerdict === 'pass' && r.verdict === 'pass')
+}
+{
+  const r = classifyPlan(fixture('delete-dev-lambda.json'), { failOn: 'warning' })
+  check('failOn warning: a warning-only plan fails', r.policyVerdict === 'fail' && r.verdict === 'fail')
+}
+
 // ── unknown / computed values ──────────────────────────────────────────────
 
 // A database whose resulting publicly_accessible is unknown at plan time cannot be
@@ -264,11 +283,21 @@ throwsCode('truncated json rejected', () => parsePlan('{"resource_changes":['), 
 throwsCode('resource_changes wrong type rejected', () => parsePlan('{"resource_changes":"wrong"}'), 'INVALID_RESOURCE_CHANGE')
 throwsCode('missing actions rejected', () => parsePlan('{"resource_changes":[{"address":"a.b","type":"a","name":"b","change":{}}]}'), 'INVALID_RESOURCE_CHANGE')
 throwsCode('unknown action rejected', () => parsePlan('{"resource_changes":[{"address":"a.b","type":"a","name":"b","change":{"actions":["frobnicate"]}}]}'), 'UNSUPPORTED_ACTION')
+throwsCode('unsupported format_version rejected', () => parsePlan('{"format_version":"99.0","resource_changes":[]}'), 'UNSUPPORTED_FORMAT')
+throwsCode('malformed data source rejected', () => parsePlan('{"format_version":"1.2","resource_changes":[{"mode":"data","address":"data.x.y"}]}'), 'INVALID_RESOURCE_CHANGE')
+throwsCode('missing identity rejected', () => parsePlan('{"format_version":"1.2","resource_changes":[{"change":{"actions":["delete"]}}]}'), 'INVALID_RESOURCE_CHANGE')
+throwsCode('impossible action combo rejected', () => parsePlan('{"format_version":"1.2","resource_changes":[{"address":"a.b","type":"a","name":"b","change":{"actions":["create","update"]}}]}'), 'UNSUPPORTED_ACTION')
 
 // A valid plan with an empty resource_changes array is a real no-change plan.
 {
   const r = classifyPlan(parsePlan('{"format_version":"1.2","resource_changes":[]}'))
   check('valid no-change plan: pass, 0 scanned', r.verdict === 'pass' && r.stats.resourcesScanned === 0)
+}
+
+// A plan containing only a valid data-source read is a valid no-managed-change plan.
+{
+  const r = classifyPlan(parsePlan('{"format_version":"1.2","resource_changes":[{"mode":"data","address":"data.aws_ami.x","type":"aws_ami","name":"x","change":{"actions":["read"],"before":null,"after":null}}]}'))
+  check('data-only plan: pass, 0 scanned', r.verdict === 'pass' && r.stats.resourcesScanned === 0)
 }
 
 // ── allowDestruction scoping ───────────────────────────────────────────────

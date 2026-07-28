@@ -75,7 +75,13 @@ export class PlanInputError extends Error {
   }
 }
 
-const SUPPORTED_ACTIONS = new Set<string>(['no-op', 'create', 'read', 'update', 'delete'])
+// The exact action sequences Terraform emits. Anything else (an unknown verb, an
+// impossible combination like create+update, or an empty array) is rejected rather
+// than guessed at.
+const ALLOWED_ACTION_SEQUENCES = new Set<string>([
+  'no-op', 'create', 'read', 'update', 'delete', 'delete,create', 'create,delete',
+])
+const SUPPORTED_FORMAT_MAJORS = new Set<string>(['0', '1'])
 
 // Enough structural validation to prove the intended artifact reached the gate,
 // without reproducing Terraform's whole schema. Distinguishes a valid plan (with or
@@ -86,6 +92,15 @@ function validatePlanDoc(doc: any): void {
   }
   if (doc.terraform_version != null && typeof doc.terraform_version !== 'string') {
     throw new PlanInputError('UNSUPPORTED_FORMAT', '`terraform_version` must be a string.')
+  }
+  if (doc.format_version != null) {
+    if (typeof doc.format_version !== 'string') {
+      throw new PlanInputError('UNSUPPORTED_FORMAT', '`format_version` must be a string.')
+    }
+    const major = doc.format_version.split('.')[0]
+    if (!SUPPORTED_FORMAT_MAJORS.has(major)) {
+      throw new PlanInputError('UNSUPPORTED_FORMAT', `Unsupported plan format_version "${doc.format_version}". Prodgate supports format 0.x and 1.x.`)
+    }
   }
   const hasResourceChanges = 'resource_changes' in doc
   const looksLikePlan = hasResourceChanges || 'planned_values' in doc || 'configuration' in doc
@@ -123,9 +138,10 @@ export function parsePlan(json: string): ResourceChange[] {
     if (rc === null || typeof rc !== 'object' || Array.isArray(rc)) {
       throw new PlanInputError('INVALID_RESOURCE_CHANGE', 'Resource change is not an object.', at)
     }
-    // Skip data sources and anything that is not a managed resource.
-    if (rc.mode && rc.mode !== 'managed') continue
 
+    // Every entry is validated structurally, including data sources, before data
+    // sources are excluded from classification. A malformed data source is still a
+    // malformed plan.
     const change = rc.change
     if (change === null || typeof change !== 'object' || Array.isArray(change)) {
       throw new PlanInputError('INVALID_RESOURCE_CHANGE', 'Missing or invalid `change` object.', at + '.change')
@@ -133,17 +149,29 @@ export function parsePlan(json: string): ResourceChange[] {
     if (!Array.isArray(change.actions)) {
       throw new PlanInputError('INVALID_RESOURCE_CHANGE', 'Missing or invalid `change.actions` array.', at + '.change.actions')
     }
-    for (const a of change.actions) {
-      if (!SUPPORTED_ACTIONS.has(a)) {
-        throw new PlanInputError('UNSUPPORTED_ACTION', `Unsupported action "${a}".`, at + '.change.actions')
-      }
+    if (!ALLOWED_ACTION_SEQUENCES.has(change.actions.join(','))) {
+      throw new PlanInputError('UNSUPPORTED_ACTION', `Unsupported action sequence [${change.actions.join(', ')}].`, at + '.change.actions')
     }
+    // Identity is required so a change can never classify as an unnamed resource.
+    if (typeof rc.address !== 'string' || rc.address.length === 0) {
+      throw new PlanInputError('INVALID_RESOURCE_CHANGE', 'Missing `address`.', at + '.address')
+    }
+    if (typeof rc.type !== 'string' || rc.type.length === 0) {
+      throw new PlanInputError('INVALID_RESOURCE_CHANGE', 'Missing `type`.', at + '.type')
+    }
+    if (typeof rc.name !== 'string' || rc.name.length === 0) {
+      throw new PlanInputError('INVALID_RESOURCE_CHANGE', 'Missing `name`.', at + '.name')
+    }
+
+    // Data sources and non-managed resources are validated above but not classified.
+    if (rc.mode && rc.mode !== 'managed') continue
+
     const actions = change.actions as TfAction[]
 
     out.push({
-      address: rc.address ?? `${rc.type ?? '?'}.${rc.name ?? '?'}`,
-      type: rc.type ?? '',
-      name: rc.name ?? '',
+      address: rc.address,
+      type: rc.type,
+      name: rc.name,
       provider: rc.provider_name ?? '',
       actions,
       before: change.before ?? null,

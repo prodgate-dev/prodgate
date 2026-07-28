@@ -46,12 +46,19 @@ export type Config = {
   allowDestroy?: string[] // deprecated alias for allowDestruction
 }
 
+export type EnforcementMode = 'audit' | 'enforce'
+export type FailOn = 'critical' | 'warning' | 'never'
+
 export type ClassifyOptions = {
   agent?: AgentInfo
   approved?: boolean
-  strict?: boolean
+  strict?: boolean // deprecated alias for failOn: 'warning'
+  mode?: EnforcementMode
+  failOn?: FailOn
   config?: Config
   planHash?: string
+  configPath?: string
+  policyDigest?: string
 }
 
 export type PlanResult = {
@@ -62,11 +69,21 @@ export type PlanResult = {
   // Destructions that a configured allowDestruction exception suppressed. Recorded
   // so the report can show what was allowed and by which pattern.
   suppressions: { address: string; matchedBy?: string }[]
+  // The policy decision from the findings and the failOn threshold, independent of
+  // enforcement mode.
+  policyVerdict: 'pass' | 'fail'
+  enforcementMode: EnforcementMode
+  failOn: FailOn
+  // Whether this would block a merge in enforce mode (policy fails and no approval).
+  wouldBlock: boolean
+  // The enforcement outcome that drives the exit code. It is 'fail' only when enforce
+  // mode actually blocks; in audit mode it stays 'pass' even when wouldBlock is true.
   verdict: 'pass' | 'fail'
   approved: boolean
-  strict: boolean
   agent: AgentInfo
   planHash?: string
+  configPath?: string
+  policyDigest?: string
   stats: {
     resourcesScanned: number
     // Per-change-kind tallies for the plan digest. replaced is kept separate from
@@ -218,19 +235,31 @@ export function classifyPlan(changes: ResourceChange[], opts: ClassifyOptions = 
   const dangerous = findings.filter(f => f.type === 'dangerous_mutation').length
 
   const approved = !!opts.approved
-  const strict = !!opts.strict
-  const blocking = criticalCount > 0 || (strict && warningCount > 0)
-  const verdict: 'pass' | 'fail' = blocking && !approved ? 'fail' : 'pass'
+  const failOn: FailOn = opts.failOn ?? (opts.strict ? 'warning' : 'critical')
+  const mode: EnforcementMode = opts.mode ?? 'enforce'
+  const policyBlocking =
+    failOn === 'never' ? false
+    : failOn === 'warning' ? criticalCount > 0 || warningCount > 0
+    : criticalCount > 0
+  const policyVerdict: 'pass' | 'fail' = policyBlocking ? 'fail' : 'pass'
+  const wouldBlock = policyBlocking && !approved
+  const blocked = mode === 'enforce' && wouldBlock
+  const verdict: 'pass' | 'fail' = blocked ? 'fail' : 'pass'
 
   return {
     findings,
     disruptions,
     suppressions,
+    policyVerdict,
+    enforcementMode: mode,
+    failOn,
+    wouldBlock,
     verdict,
     approved,
-    strict,
     agent,
     planHash: opts.planHash,
+    configPath: opts.configPath,
+    policyDigest: opts.policyDigest,
     stats: { resourcesScanned: changes.length, created, updated, replaced, destroyed, destructive, dangerous, criticalCount, warningCount },
   }
 }
