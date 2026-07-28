@@ -104,8 +104,8 @@ runs:
         PRODGATE_PR_BODY: ${{ github.event.pull_request.body }}
         # The override is honored only in the run triggered by adding the
         # prodgate-approved label. Any other event (open, reopen, synchronize, re-run)
-        # is not an override, so a stale label cannot pass a plan a human has not just
-        # signed off. After a new commit the label must be removed and re-added.
+        # is not an override, so a stale label cannot pass a plan that was not just
+        # labeled. After a new commit the label must be removed and re-added.
         PRODGATE_OVERRIDE: ${{ github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'prodgate-approved' }}
         PRODGATE_OVERRIDE_LABEL: 'prodgate-approved'
         PRODGATE_OVERRIDE_ACTOR: ${{ github.actor }}

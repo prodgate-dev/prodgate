@@ -6,9 +6,24 @@
  * destructive or dangerous changes and never buries the signal.
  */
 
-import { PlanResult, PlanFinding } from './classify'
+import { PlanResult, PlanFinding, OverrideInfo } from './classify'
 
 const BAR = '─'.repeat(50)
+
+// Describe an applied override from its mechanism and metadata. Never call the
+// triggering actor an approver.
+function overrideHeadline(o: OverrideInfo): string {
+  if (o.mechanism === 'github_label') return 'Manual GitHub label override applied.'
+  if (o.mechanism === 'manual') return 'Manual CLI override applied.'
+  return 'Manual override applied.'
+}
+function overrideDetails(o: OverrideInfo): string[] {
+  const d: string[] = []
+  if (o.mechanism === 'github_label' && o.label) d.push(`Label: ${o.label}`)
+  if (o.workflowActor) d.push(`Triggered by: @${o.workflowActor}`)
+  if (o.headSha) d.push(`PR head: ${o.headSha}`)
+  return d
+}
 
 type Paint = (s: string) => string
 type Palette = { red: Paint; yellow: Paint; green: Paint }
@@ -136,9 +151,11 @@ export function formatHuman(result: PlanResult, opts: { color?: boolean } = {}):
     for (const sig of result.agent.signals) lines.push(`           ${sig}`)
   }
 
-  if (result.overrideApplied && (criticals.length > 0 || warnings.length > 0)) {
+  if (result.overrideApplied && result.override) {
     lines.push('')
-    lines.push('[OVERRIDE] The prodgate-approved label override is active. Findings remain recorded, but the gate is passing.')
+    lines.push('[OVERRIDE] ' + overrideHeadline(result.override))
+    for (const d of overrideDetails(result.override)) lines.push('           ' + d)
+    lines.push('           Findings remain recorded, but the gate is passing.')
   }
 
   lines.push('')
@@ -206,12 +223,17 @@ export function formatGithub(result: PlanResult): string {
     lines.push(note)
   }
 
-  if (result.overrideApplied && result.findings.length > 0) {
+  if (result.overrideApplied && result.override) {
+    const o = result.override
+    const bits: string[] = [overrideHeadline(o)]
+    if (o.mechanism === 'github_label' && o.label) bits.push(`label \`${o.label}\``)
+    if (o.workflowActor) bits.push(`triggered by \`@${o.workflowActor}\``)
+    if (o.headSha) bits.push(`PR head \`${o.headSha}\``)
     lines.push('')
-    lines.push('The `prodgate-approved` label override is active. Findings remain recorded, but the gate is passing.')
+    lines.push(`**Override:** ${bits.join(', ')}. Findings remain recorded, but the gate is passing.`)
   } else if (criticals.length > 0) {
     lines.push('')
-    lines.push('To override: add the `prodgate-approved` label to this PR and re-run the check.')
+    lines.push('To override: add the `prodgate-approved` label to this PR.')
   }
 
   const footer: string[] = [`mode: ${result.enforcementMode}`, `fail-on: ${result.failOn}`]

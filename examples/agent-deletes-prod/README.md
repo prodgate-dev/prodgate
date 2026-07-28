@@ -32,10 +32,10 @@ PRODGATE_COMMITS=$'cleanup unused resources\n\nCo-Authored-By: Claude <noreply@a
 
 The PR comment now flags the change as AI-agent generated, with the signal it matched.
 
-## Approving
+## Overriding
 
-In CI a human adds the `prodgate-approved` label. Locally:
+In CI, adding the `prodgate-approved` label records a manual override. Locally:
 
 ```bash
-prodgate check plan.json --approved   # Verdict: PASS (approved); the finding is still reported
+prodgate check plan.json --override   # Verdict: PASS (override); the finding is still reported
 ```

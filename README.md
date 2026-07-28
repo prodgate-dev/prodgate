@@ -12,7 +12,7 @@ It works out of the box with no rules to write, and it reads the plan as a file:
 
 ## Why
 
-A common, dangerous PR drops a production database, replaces a volume, disables deletion protection, or opens a security group to the world. In a diff it can look routine, and it shows up increasingly often in AI-generated changes. Prodgate turns that into a failed check with a recorded human override.
+A common, dangerous PR drops a production database, replaces a volume, disables deletion protection, or opens a security group to the world. In a diff it can look routine, and it shows up increasingly often in AI-generated changes. Prodgate turns that into a failed check with a recorded manual override.
 
 ## Usage (GitHub Actions)
 
@@ -23,8 +23,8 @@ name: Prodgate
 
 on:
   pull_request:
-    # `labeled`/`unlabeled` let the gate re-run when a human adds or removes the
-    # prodgate-approved label, without needing a new commit.
+    # `labeled` lets the override take effect in the run that adds the
+    # prodgate-approved label; `unlabeled` re-runs the gate when it is removed.
     types: [opened, synchronize, reopened, labeled, unlabeled]
 
 permissions:
@@ -90,7 +90,7 @@ Plan summary: 0 to add, 0 to change, 1 to destroy
 
 [CRITICAL] 1 destructive or dangerous change
 
-  DELETE   aws_db_instance.main               deletes a stateful resource (data loss)
+  DELETE   aws_db_instance.main               deletes a stateful resource (data-loss risk)
 
 ──────────────────────────────────────────────────
 Verdict: FAIL
@@ -128,7 +128,7 @@ When a flagged change looks agent-generated, Prodgate says so and shows the sign
 
 ## Manual override using a GitHub label
 
-Adding the `prodgate-approved` label applies a repository-controlled manual override: the finding is still reported, but the gate passes. It is honored only in the run triggered by adding the label. Opening, reopening, pushing a new commit, or re-running is not an override, so a leftover label never passes a plan on its own. After a new commit, remove and re-add the label.
+Adding the `prodgate-approved` label applies a repository-controlled manual override: the finding is still reported, but the gate passes. It is honored only in the run for the event that added the label (re-running that same run keeps the same event and plan head SHA, so it stays valid). Opening, reopening, or pushing a new commit is a different event, so a leftover label never passes a plan on its own. After a new commit, remove and re-add the label.
 
 This is an override, not a verified approval. GitHub repository permissions determine who can apply the label. Prodgate does not verify separation of duties, team membership, whether the actor reviewed the plan, or whether the plan later applied matches this one. The report and the JSON envelope record the label, the triggering actor, and the plan head SHA so the override is auditable, not that it is authorized.
 
@@ -201,7 +201,9 @@ The Action exposes outputs so later steps can react without parsing the comment:
         with:
           plan-json: plan.json
       - name: Notify on a block
-        if: ${{ steps.prodgate.outputs.execution-outcome == 'blocked' }}
+        # always() is needed because the Prodgate step fails on a block; without it
+        # GitHub applies success() and skips this step.
+        if: ${{ always() && steps.prodgate.outputs.execution-outcome == 'blocked' }}
         run: echo "Blocked ${{ steps.prodgate.outputs.critical-count }} critical change(s)"
 ```
 

@@ -246,8 +246,22 @@ function canonicalize(v: any): any {
   return v
 }
 
+function sortedUnique(arr?: string[]): string[] {
+  return arr ? [...new Set(arr)].sort() : []
+}
+
+// Hash the effective policy, not the raw config: use the resolved mode and fail-on
+// (so a CLI override matches an equivalent config), canonicalize the deprecated
+// allowDestroy alias, and sort and de-duplicate pattern arrays so semantically equal
+// policies share a digest.
 function computePolicyDigest(mode: EnforcementMode, failOn: FailOn, config?: Config): string {
-  const effective = { policyVersion: POLICY_VERSION, mode, failOn, config: config ?? {} }
+  const effective = {
+    policyVersion: POLICY_VERSION,
+    mode,
+    failOn,
+    ignore: sortedUnique(config?.ignore),
+    allowDestruction: sortedUnique(config?.allowDestruction ?? config?.allowDestroy),
+  }
   const json = JSON.stringify(canonicalize(effective))
   return 'sha256:' + crypto.createHash('sha256').update(json).digest('hex')
 }

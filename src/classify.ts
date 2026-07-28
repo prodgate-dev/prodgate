@@ -10,8 +10,9 @@
  *   an update matching a dangerous rule       -> CRITICAL or WARNING per the rule
  *   everything else                           -> no finding
  *
- * A human approval (the `prodgate-approved` label, surfaced as `approved`) keeps the
- * findings but flips the verdict to pass. `strict` also fails on warnings.
+ * A manual override (the `prodgate-approved` label in the Action, or --override on the
+ * CLI) keeps the findings but flips an enforce-mode block to pass. `strict` is a
+ * deprecated alias for fail-on warning.
  */
 
 import { ResourceChange } from './plan'
@@ -90,14 +91,20 @@ export type PlanResult = {
   policyVerdict: 'pass' | 'fail'
   enforcementMode: EnforcementMode
   failOn: FailOn
-  // Whether this would block a merge in enforce mode (policy fails and no approval).
+  // Whether this would block a merge in enforce mode, from the findings alone
+  // (before any override).
   wouldBlock: boolean
   // The enforcement outcome that drives the exit code. It is 'fail' only when enforce
   // mode actually blocks; in audit mode it stays 'pass' even when wouldBlock is true.
   verdict: 'pass' | 'fail'
   // What actually happened, unambiguously, for integrations.
   executionOutcome: ExecutionOutcome
+  // An override was requested (flag or label present). It only changes the outcome
+  // when it was actually applied.
+  overrideRequested: boolean
+  // An override actually changed the outcome (only possible on an enforce-mode block).
   overrideApplied: boolean
+  // Present only when overrideApplied is true.
   override?: OverrideInfo
   agent: AgentInfo
   planHash?: string
@@ -195,7 +202,7 @@ export function classifyPlan(changes: ResourceChange[], opts: ClassifyOptions = 
             type: 'destructive_stateful_nonprod',
             resource: { address: rc.address, type: rc.type },
             action,
-            reason: `stateful resource in a declared non-production environment (tagged ${npTag}); ${action} may cause data loss, and recovery depends on backups, snapshots, replication, retention, or versioning that Prodgate cannot verify from this plan`,
+            reason: `stateful resource classified as a declared non-production environment; ${action} may cause data loss, and recovery depends on backups, snapshots, replication, retention, or versioning that Prodgate cannot verify from this plan`,
             summary: `${verb} a stateful resource in a declared non-production environment (data-loss risk)`,
             evidence: [...destroyEvidence, { field: 'before.environmentClassification', observed: 'non_production' }],
             agentAuthored: agent.likelyAgent,
@@ -212,7 +219,7 @@ export function classifyPlan(changes: ResourceChange[], opts: ClassifyOptions = 
             type: 'destructive_stateful',
             resource: { address: rc.address, type: rc.type },
             action,
-            reason: `conflicting environment signals (declared non-production ${npTag} but ${conflict}); failing closed because this destructive change may affect production data`,
+            reason: `conflicting production and non-production environment signals (${conflict}); failing closed because this destructive change may affect production data`,
             summary: `${verb} a stateful resource (conflicting signals, data-loss risk)`,
             evidence: [
               ...destroyEvidence,
@@ -296,8 +303,8 @@ export function classifyPlan(changes: ResourceChange[], opts: ClassifyOptions = 
   const destructive = findings.filter(f => f.type !== 'dangerous_mutation').length
   const dangerous = findings.filter(f => f.type === 'dangerous_mutation').length
 
-  const override: OverrideInfo | undefined = opts.override ?? (opts.approved ? { applied: true, mechanism: 'manual' } : undefined)
-  const overrideApplied = !!override?.applied
+  const overrideRequest: OverrideInfo | undefined = opts.override ?? (opts.approved ? { applied: true, mechanism: 'manual' } : undefined)
+  const overrideRequested = !!overrideRequest?.applied
   const failOn: FailOn = opts.failOn ?? (opts.strict ? 'warning' : 'critical')
   const mode: EnforcementMode = opts.mode ?? 'enforce'
   const policyBlocking =
@@ -305,13 +312,18 @@ export function classifyPlan(changes: ResourceChange[], opts: ClassifyOptions = 
     : failOn === 'warning' ? criticalCount > 0 || warningCount > 0
     : criticalCount > 0
   const policyVerdict: 'pass' | 'fail' = policyBlocking ? 'fail' : 'pass'
-  const wouldBlock = policyBlocking && !overrideApplied
-  const blocked = mode === 'enforce' && wouldBlock
-  const verdict: 'pass' | 'fail' = blocked ? 'fail' : 'pass'
+  // wouldBlock is the pre-override enforcement result: would this block in enforce
+  // mode on the findings alone. An override only actually applies to an enforce-mode
+  // block; in audit mode nothing needs overriding, and a passing plan has nothing to
+  // override.
+  const wouldBlock = policyBlocking
+  const overrideApplied = mode === 'enforce' && policyBlocking && overrideRequested
+  const override: OverrideInfo | undefined = overrideApplied ? { ...overrideRequest, applied: true } : undefined
+  const verdict: 'pass' | 'fail' = mode === 'enforce' && policyBlocking && !overrideApplied ? 'fail' : 'pass'
   const executionOutcome: ExecutionOutcome =
     !policyBlocking ? 'allowed'
-    : overrideApplied ? 'overridden'
     : mode === 'audit' ? 'reported'
+    : overrideApplied ? 'overridden'
     : 'blocked'
 
   return {
@@ -324,6 +336,7 @@ export function classifyPlan(changes: ResourceChange[], opts: ClassifyOptions = 
     wouldBlock,
     verdict,
     executionOutcome,
+    overrideRequested,
     overrideApplied,
     override,
     agent,

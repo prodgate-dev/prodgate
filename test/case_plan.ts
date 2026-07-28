@@ -286,13 +286,25 @@ console.log('─'.repeat(50))
   check('failOn never: a critical does not fail the policy', r.policyVerdict === 'pass' && r.verdict === 'pass')
 }
 
-// executionOutcome distinguishes the four outcomes unambiguously.
+// executionOutcome distinguishes the four outcomes, and an override only applies to
+// an enforce-mode block.
+const OV = { applied: true, mechanism: 'github_label' as const, label: 'prodgate-approved', workflowActor: 'octocat', headSha: 'abc' }
 {
   check('outcome allowed on a clean plan', classifyPlan(fixture('create-only.json')).executionOutcome === 'allowed')
-  check('outcome blocked in enforce', classifyPlan(fixture('delete-db.json')).executionOutcome === 'blocked')
+  check('outcome blocked in enforce, no override', classifyPlan(fixture('delete-db.json')).executionOutcome === 'blocked')
   check('outcome reported in audit', classifyPlan(fixture('delete-db.json'), { mode: 'audit' }).executionOutcome === 'reported')
-  const ov = classifyPlan(fixture('delete-db.json'), { override: { applied: true, mechanism: 'github_label', label: 'prodgate-approved', workflowActor: 'octocat', headSha: 'abc' } })
-  check('outcome overridden with metadata', ov.executionOutcome === 'overridden' && ov.wouldBlock === false && ov.override?.workflowActor === 'octocat' && ov.override?.headSha === 'abc')
+
+  // A clean plan with an override request applies nothing.
+  const clean = classifyPlan(fixture('create-only.json'), { override: OV })
+  check('clean plan + override request: allowed, not applied', clean.executionOutcome === 'allowed' && clean.overrideApplied === false && clean.override === undefined && clean.overrideRequested === true)
+
+  // Audit already does not block, so an override request stays reported.
+  const audit = classifyPlan(fixture('delete-db.json'), { mode: 'audit', override: OV })
+  check('audit + override request: still reported, not applied', audit.executionOutcome === 'reported' && audit.overrideApplied === false)
+
+  // Enforce block with an override request is the only case where it applies.
+  const ov = classifyPlan(fixture('delete-db.json'), { override: OV })
+  check('enforce block + override request: overridden with metadata', ov.executionOutcome === 'overridden' && ov.overrideApplied === true && ov.wouldBlock === true && ov.override?.workflowActor === 'octocat' && ov.override?.headSha === 'abc')
 }
 {
   const r = classifyPlan(fixture('delete-dev-lambda.json'), { failOn: 'warning' })

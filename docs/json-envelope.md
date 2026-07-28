@@ -21,7 +21,7 @@ increments the major version.
 | `schemaVersion` | string | `"1.0"`. |
 | `engine` | object | `{ name: "prodgate", version }`. |
 | `policy` | object | `{ version, digest }`, plus `configPath` when a config file was loaded. `digest` is a sha256 of the effective policy (rule-set version, mode, fail-on, and config), order-independent. |
-| `plan` | object | `{ formatVersion?, terraformVersion?, hash }`. `hash` is a sha256 of the plan bytes (BOM-normalized). |
+| `plan` | object | `{ formatVersion?, terraformVersion?, hash }`. `hash` is a sha256 of the decoded, BOM-normalized plan text (UTF-16 input is decoded to text first). |
 | `enforcement` | object | See below. |
 | `stats` | object | See below. |
 | `findings` | array | See below. Sorted, deterministic order. |
@@ -46,7 +46,8 @@ An input or config error exits 2 (no envelope).
 ## findings
 
 Each finding: `{ ruleId, severity, category, confidence, type, resource: { address,
-type }, action, reason, summary, evidence, agentAuthored }`.
+type }, action, reason, summary, evidence, agentAuthored }`, and an optional
+`detail: { attribute? }` naming the attribute a dangerous-mutation rule keyed on.
 
 - `ruleId` is stable and never reassigned to different semantics. `PG-DESTROY-*` for
   destructions, `PG-AWS-*` for dangerous mutations.

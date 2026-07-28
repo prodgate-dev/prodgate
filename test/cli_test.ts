@@ -121,6 +121,20 @@ check('envelope findings are severity-sorted', (() => {
     return f.length >= 2 && f[0].severity === 'CRITICAL' && f[f.length - 1].severity === 'WARNING'
   } catch { return false }
 })())
+check('finding order is stable across resource permutation', (() => {
+  const order = (fix: string) => {
+    try { return JSON.parse(run(['check', fixture(fix), '--json']).stdout).findings.map((f: any) => `${f.ruleId}@${f.resource.address}`).join(',') } catch { return '' }
+  }
+  const a = order('large-mixed-plan.json')
+  return a !== '' && a === order('large-mixed-permuted.json')
+})())
+check('clean plan with --override reports allowed and no applied override', (() => {
+  const r = run(['check', fixture('create-only.json'), '--override', '--json'])
+  try {
+    const o = JSON.parse(r.stdout)
+    return r.code === 0 && o.enforcement.executionOutcome === 'allowed' && o.enforcement.override === undefined
+  } catch { return false }
+})())
 
 // UTF-16 encoded plans (Windows tooling) must evaluate the same as UTF-8.
 {
