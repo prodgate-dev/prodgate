@@ -19,33 +19,34 @@ export const POLICY_VERSION = 'aws-default-v1'
 
 export type Severity = 'CRITICAL' | 'WARNING' | 'INFO'
 
-export type StatefulInfo = { category: string }
+export type StatefulInfo = { category: string; defaultSeverity: 'CRITICAL'; rationale: string }
 
-// Deleting or replacing any of these destroys data irreversibly, regardless of
-// environment tags. Data loss is data loss.
+// Deleting or replacing any of these can cause data loss regardless of environment
+// tags. Whether recovery is possible depends on backups, snapshots, or versioning
+// that the plan cannot see, so these are critical by default. Each entry records why.
 export const STATEFUL_RESOURCES: Record<string, StatefulInfo> = {
-  aws_db_instance: { category: 'database' },
-  aws_rds_cluster: { category: 'database' },
-  aws_rds_global_cluster: { category: 'database' },
-  aws_docdb_cluster: { category: 'database' },
-  aws_neptune_cluster: { category: 'database' },
-  aws_redshift_cluster: { category: 'database' },
-  aws_elasticache_cluster: { category: 'cache' },
-  aws_elasticache_replication_group: { category: 'cache' },
-  aws_dynamodb_table: { category: 'database' },
-  aws_timestreamwrite_database: { category: 'database' },
-  aws_timestreamwrite_table: { category: 'database' },
-  aws_qldb_ledger: { category: 'database' },
-  aws_s3_bucket: { category: 'object-store' },
-  aws_ebs_volume: { category: 'volume' },
-  aws_efs_file_system: { category: 'filesystem' },
-  aws_fsx_lustre_file_system: { category: 'filesystem' },
-  aws_glacier_vault: { category: 'archive' },
-  aws_route53_zone: { category: 'dns' },
-  aws_kms_key: { category: 'kms' },
-  aws_secretsmanager_secret: { category: 'secret' },
-  aws_cloudwatch_log_group: { category: 'logs' },
-  aws_ecr_repository: { category: 'registry' },
+  aws_db_instance: { category: 'database', defaultSeverity: 'CRITICAL', rationale: 'Deleting the instance destroys its database storage unless a final snapshot is taken.' },
+  aws_rds_cluster: { category: 'database', defaultSeverity: 'CRITICAL', rationale: 'The cluster owns the storage volume, so destroying it destroys the database data unless a final snapshot is taken.' },
+  aws_rds_global_cluster: { category: 'database', defaultSeverity: 'CRITICAL', rationale: 'Removing the global cluster tears down its regional storage.' },
+  aws_docdb_cluster: { category: 'database', defaultSeverity: 'CRITICAL', rationale: 'The cluster holds the document storage, so destroying it destroys the data.' },
+  aws_neptune_cluster: { category: 'database', defaultSeverity: 'CRITICAL', rationale: 'The cluster holds the graph storage, so destroying it destroys the data.' },
+  aws_redshift_cluster: { category: 'database', defaultSeverity: 'CRITICAL', rationale: 'The cluster holds the warehouse storage, so destroying it destroys the data unless a final snapshot is taken.' },
+  aws_elasticache_cluster: { category: 'cache', defaultSeverity: 'CRITICAL', rationale: 'Destroying the cache node group discards its in-memory data.' },
+  aws_elasticache_replication_group: { category: 'cache', defaultSeverity: 'CRITICAL', rationale: 'Destroying the replication group discards its in-memory data.' },
+  aws_dynamodb_table: { category: 'database', defaultSeverity: 'CRITICAL', rationale: 'Deleting the table deletes all items unless point-in-time recovery is used to restore them.' },
+  aws_timestreamwrite_database: { category: 'database', defaultSeverity: 'CRITICAL', rationale: 'Deleting the database deletes its tables and time-series data.' },
+  aws_timestreamwrite_table: { category: 'database', defaultSeverity: 'CRITICAL', rationale: 'Deleting the table deletes its time-series records.' },
+  aws_qldb_ledger: { category: 'database', defaultSeverity: 'CRITICAL', rationale: 'Deleting the ledger destroys its journal and tables.' },
+  aws_s3_bucket: { category: 'object-store', defaultSeverity: 'CRITICAL', rationale: 'Deleting the bucket removes its objects unless versioning or replication preserved copies.' },
+  aws_ebs_volume: { category: 'volume', defaultSeverity: 'CRITICAL', rationale: 'Deleting the volume destroys the block data on it unless a snapshot exists.' },
+  aws_efs_file_system: { category: 'filesystem', defaultSeverity: 'CRITICAL', rationale: 'Deleting the file system destroys the files stored on it unless a backup exists.' },
+  aws_fsx_lustre_file_system: { category: 'filesystem', defaultSeverity: 'CRITICAL', rationale: 'Deleting the file system destroys the data on it unless a backup exists.' },
+  aws_glacier_vault: { category: 'archive', defaultSeverity: 'CRITICAL', rationale: 'Deleting the vault destroys the archives stored in it.' },
+  aws_route53_zone: { category: 'dns', defaultSeverity: 'CRITICAL', rationale: 'Deleting the zone removes its DNS records and can break resolution for the domain.' },
+  aws_kms_key: { category: 'kms', defaultSeverity: 'CRITICAL', rationale: 'Scheduling the key for deletion makes data encrypted under it unrecoverable.' },
+  aws_secretsmanager_secret: { category: 'secret', defaultSeverity: 'CRITICAL', rationale: 'Deleting the secret removes the stored secret material.' },
+  aws_cloudwatch_log_group: { category: 'logs', defaultSeverity: 'CRITICAL', rationale: 'Deleting the log group deletes its retained log data.' },
+  aws_ecr_repository: { category: 'registry', defaultSeverity: 'CRITICAL', rationale: 'Deleting the repository deletes the container images stored in it.' },
 }
 
 export type DisruptiveInfo = { category: string }

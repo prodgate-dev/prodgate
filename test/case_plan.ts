@@ -225,7 +225,7 @@ console.log('─'.repeat(50))
 // Conflicting signals (prod-looking name + dev tag) fail closed -> CRITICAL
 {
   const r = classifyPlan(fixture('delete-conflict-db.json'))
-  check('delete-conflict-db: fail, conflict fails closed', r.verdict === 'fail' && r.findings[0].type === 'destructive_stateful')
+  check('delete-conflict-db: fail, conflict fails closed with explanation', r.verdict === 'fail' && r.findings[0].type === 'destructive_stateful' && /conflicting/i.test(r.findings[0].reason))
 }
 
 // Untagged stateful delete stays CRITICAL (unknown fails closed)
@@ -338,6 +338,25 @@ throwsCode('impossible action combo rejected', () => parsePlan('{"format_version
 {
   const r = classifyPlan(fixture('replace-retag-prod-to-dev.json'))
   check('replace-retag-prod-to-dev: fail, destruction judged from before', r.verdict === 'fail' && r.stats.criticalCount === 1 && r.findings[0].type === 'destructive_stateful' && r.findings[0].action === 'replace')
+}
+
+// dev -> prod replace: the destroyed object is dev, so a warning, and the new
+// production object is evaluated separately (nothing dangerous here).
+{
+  const r = classifyPlan(fixture('replace-retag-dev-to-prod.json'))
+  check('replace-retag-dev-to-prod: warning from before-dev, not critical', r.stats.criticalCount === 0 && r.findings.some(f => f.type === 'destructive_stateful_nonprod'))
+}
+
+// A delete is classified from before tags: a prod-tagged non-stateful resource.
+{
+  const r = classifyPlan(fixture('delete-nonstateful-prod.json'))
+  check('delete-nonstateful-prod: production from before tags', r.verdict === 'fail' && r.findings[0].type === 'destructive_production')
+}
+
+// before and after tags are parsed and kept per side.
+{
+  const changes = fixture('replace-retag-prod-to-dev.json')
+  check('parse: beforeTags and afterTags kept separate', changes[0].beforeTags.Environment === 'prod' && changes[0].afterTags.Environment === 'dev')
 }
 
 // A leading BOM (Windows / PowerShell `terraform show -json >` output) must not

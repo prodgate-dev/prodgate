@@ -13,6 +13,10 @@ export function isStateful(rc: ResourceChange): boolean {
   return rc.type in STATEFUL_RESOURCES
 }
 
+export function statefulRationale(rc: ResourceChange): string {
+  return STATEFUL_RESOURCES[rc.type]?.rationale ?? 'Destroying this resource can cause data loss.'
+}
+
 export function isDisruptiveReplace(rc: ResourceChange): boolean {
   return rc.type in DISRUPTIVE_REPLACE
 }

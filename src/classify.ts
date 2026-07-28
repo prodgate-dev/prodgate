@@ -17,7 +17,7 @@
 import { ResourceChange } from './plan'
 import { Severity } from './resources'
 import { AgentInfo } from './agent'
-import { isStateful, isProductionTags, nonProductionTagFrom, isDisruptiveReplace, matchDangerousMutations } from './policy'
+import { isStateful, statefulRationale, isProductionTags, nonProductionTagFrom, isDisruptiveReplace, matchDangerousMutations } from './policy'
 
 export type FindingType =
   | 'destructive_stateful'
@@ -63,9 +63,9 @@ export type ClassifyOptions = {
 
 export type PlanResult = {
   findings: PlanFinding[]
-  // Resources whose replacement briefly interrupts service. Informational only:
+  // Resources whose replacement or removal affects availability. Informational only:
   // these never produce a finding and never affect the verdict.
-  disruptions: { address: string; type: string }[]
+  disruptions: { address: string; type: string; action: 'replace' | 'delete' }[]
   // Destructions that a configured allowDestruction exception suppressed. Recorded
   // so the report can show what was allowed and by which pattern.
   suppressions: { address: string; matchedBy?: string }[]
@@ -120,7 +120,7 @@ function firstMatch(address: string, patterns?: string[]): string | undefined {
 export function classifyPlan(changes: ResourceChange[], opts: ClassifyOptions = {}): PlanResult {
   const agent = opts.agent ?? { likelyAgent: false, signals: [] }
   const findings: PlanFinding[] = []
-  const disruptions: { address: string; type: string }[] = []
+  const disruptions: { address: string; type: string; action: 'replace' | 'delete' }[] = []
   const suppressions: { address: string; matchedBy?: string }[] = []
   let created = 0
   let updated = 0
@@ -135,10 +135,10 @@ export function classifyPlan(changes: ResourceChange[], opts: ClassifyOptions = 
     else if (rc.changeKind === 'replace') replaced++
     else if (rc.changeKind === 'delete') destroyed++
 
-    // A replace of a compute or network resource interrupts service while it is
-    // recreated. Recorded for an informational digest note only, never a finding.
-    if (rc.changeKind === 'replace' && isDisruptiveReplace(rc)) {
-      disruptions.push({ address: rc.address, type: rc.type })
+    // Replacing or removing a compute or network member affects availability while it
+    // is recreated or gone. Recorded for an informational note only, never a finding.
+    if ((rc.changeKind === 'replace' || rc.changeKind === 'delete') && isDisruptiveReplace(rc)) {
+      disruptions.push({ address: rc.address, type: rc.type, action: rc.changeKind })
     }
 
     const destructive = rc.changeKind === 'delete' || rc.changeKind === 'replace'
@@ -165,7 +165,8 @@ export function classifyPlan(changes: ResourceChange[], opts: ClassifyOptions = 
         // re-tags the new object as dev from hiding the destruction of prod data.
         const npTag = nonProductionTagFrom(rc.beforeTags)
         const protectionOn = rc.before?.deletion_protection === true || rc.before?.deletion_protection_enabled === true
-        if (npTag && !isProductionTags(rc.beforeTags, rc.address) && !protectionOn) {
+        const prodSignal = isProductionTags(rc.beforeTags, rc.address)
+        if (npTag && !prodSignal && !protectionOn) {
           findings.push({
             severity: 'WARNING',
             type: 'destructive_stateful_nonprod',
@@ -175,13 +176,26 @@ export function classifyPlan(changes: ResourceChange[], opts: ClassifyOptions = 
             summary: `${verb} a stateful resource in a declared non-production environment (data loss)`,
             agentAuthored: agent.likelyAgent,
           })
+        } else if (npTag && (prodSignal || protectionOn)) {
+          // The environment signals disagree: a non-production tag alongside a
+          // production-looking address or deletion protection. Fail closed and say why.
+          const conflict = prodSignal ? 'the address looks production' : 'deletion protection is enabled'
+          findings.push({
+            severity: 'CRITICAL',
+            type: 'destructive_stateful',
+            resource: { address: rc.address, type: rc.type },
+            action,
+            reason: `conflicting environment signals (declared non-production ${npTag} but ${conflict}); failing closed. ${action} may cause permanent data loss`,
+            summary: `${verb} a stateful resource (conflicting signals, data loss)`,
+            agentAuthored: agent.likelyAgent,
+          })
         } else {
           findings.push({
             severity: 'CRITICAL',
             type: 'destructive_stateful',
             resource: { address: rc.address, type: rc.type },
             action,
-            reason: `stateful resource; ${action} may cause permanent data loss (recovery depends on backups, snapshots, or versioning)`,
+            reason: statefulRationale(rc),
             summary: `${verb} a stateful resource (data loss)`,
             agentAuthored: agent.likelyAgent,
           })

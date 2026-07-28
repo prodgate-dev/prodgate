@@ -6,7 +6,7 @@ Block destructive infrastructure changes in CI before they ship.
   <img src="https://raw.githubusercontent.com/prodgate-dev/prodgate/main/demo/prodgate.gif" alt="Prodgate reads a Terraform plan and blocks an AI agent's attempt to delete the production database" width="760">
 </p>
 
-Prodgate reads a Terraform/OpenTofu plan and fails the build when a change would irreversibly destroy production data or expose it, especially when an AI agent generated the change. It is a CI gate, not a scanner: it reasons about the *change*, not the static config.
+Prodgate reads a Terraform/OpenTofu plan and fails the build when a change would destroy or expose production data, especially when an AI agent generated the change. It is a CI gate, not a scanner: it reasons about the *change*, not the static config.
 
 It works out of the box with no rules to write, and it reads the plan as a file: it never runs Terraform and never needs your cloud credentials.
 
@@ -98,7 +98,7 @@ A Terraform plan can contain secrets in plaintext (passwords, keys, tokens), eve
 ## What Prodgate flags
 
 **CRITICAL (fails CI):**
-- Deleting or replacing a stateful resource (databases, volumes, buckets, DNS zones, KMS keys, secrets, log groups). Data loss is data loss: critical by default, in any environment and whether the change deletes an existing resource or the plan is ambiguous about where it lives.
+- Deleting or replacing a stateful resource (databases, volumes, buckets, DNS zones, KMS keys, secrets, log groups). Critical by default in any environment, because whether the data can be recovered depends on backups, snapshots, or versioning that the plan cannot see.
 - Deleting or replacing a production-tagged resource.
 - Disabling deletion protection.
 - Making a database publicly accessible (on update or create).

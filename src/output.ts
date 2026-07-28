@@ -35,16 +35,22 @@ function planSummary(result: PlanResult): string {
   return parts.join(', ')
 }
 
-// A plain note that a replace will interrupt service. Informational only.
+// A plain note that a replace or removal affects availability. Informational only.
+function disruptionPhrase(x: { address: string; action: 'replace' | 'delete' }): string {
+  return x.action === 'delete'
+    ? `removing \`${x.address}\` affects availability`
+    : `replacing \`${x.address}\` briefly interrupts service while it is recreated`
+}
 function disruptionNote(result: PlanResult): string | null {
   const d = result.disruptions
   if (d.length === 0) return null
   if (d.length === 1) {
-    return `Replacing \`${d[0].address}\` will briefly interrupt service while it is recreated.`
+    const p = disruptionPhrase(d[0])
+    return 'Availability: ' + p.charAt(0).toUpperCase() + p.slice(1) + '.'
   }
-  const shown = d.slice(0, 5).map(x => `\`${x.address}\``)
-  const suffix = d.length > 5 ? ` (and ${d.length - 5} more)` : ''
-  return `Replacing these resources will briefly interrupt service while they are recreated: ${shown.join(', ')}${suffix}.`
+  const shown = d.slice(0, 5).map(disruptionPhrase)
+  const suffix = d.length > 5 ? `, and ${d.length - 5} more` : ''
+  return `Availability: ${shown.join('; ')}${suffix}.`
 }
 
 // Plain lines noting destructions that a configured exception allowed through.
