@@ -107,7 +107,7 @@ console.log('─'.repeat(50))
 // Approval keeps the finding but flips the verdict to pass
 {
   const r = classifyPlan(fixture('delete-db.json'), { approved: true })
-  check('approved: pass, finding still reported', r.verdict === 'pass' && r.approved && r.findings.length === 1)
+  check('override alias (approved): pass, finding still reported, outcome overridden', r.verdict === 'pass' && r.overrideApplied && r.executionOutcome === 'overridden' && r.findings.length === 1)
 }
 
 // ── real-plan shapes (hardening) ──────────────────────────────────────────
@@ -193,6 +193,8 @@ console.log('─'.repeat(50))
 {
   const r = classifyPlan(fixture('sg-ipv6-ssh-world.json'))
   check('sg-ipv6-ssh-world: fail, ipv6 world-open detected', r.verdict === 'fail' && r.findings.some(f => f.severity === 'CRITICAL'))
+  const f = r.findings.find(x => x.type === 'dangerous_mutation')
+  check('sg-ipv6: finding names ::/0, not 0.0.0.0/0', !!f && /::\/0/.test(f.summary) && f.evidence.some(e => /::\/0/.test(e.observed)) && !/0\.0\.0\.0\/0/.test(f.summary))
 }
 
 // aws_vpc_security_group_ingress_rule uses ip_protocol; "-1" is all ports -> CRITICAL
@@ -282,6 +284,15 @@ console.log('─'.repeat(50))
 {
   const r = classifyPlan(fixture('delete-db.json'), { failOn: 'never' })
   check('failOn never: a critical does not fail the policy', r.policyVerdict === 'pass' && r.verdict === 'pass')
+}
+
+// executionOutcome distinguishes the four outcomes unambiguously.
+{
+  check('outcome allowed on a clean plan', classifyPlan(fixture('create-only.json')).executionOutcome === 'allowed')
+  check('outcome blocked in enforce', classifyPlan(fixture('delete-db.json')).executionOutcome === 'blocked')
+  check('outcome reported in audit', classifyPlan(fixture('delete-db.json'), { mode: 'audit' }).executionOutcome === 'reported')
+  const ov = classifyPlan(fixture('delete-db.json'), { override: { applied: true, mechanism: 'github_label', label: 'prodgate-approved', workflowActor: 'octocat', headSha: 'abc' } })
+  check('outcome overridden with metadata', ov.executionOutcome === 'overridden' && ov.wouldBlock === false && ov.override?.workflowActor === 'octocat' && ov.override?.headSha === 'abc')
 }
 {
   const r = classifyPlan(fixture('delete-dev-lambda.json'), { failOn: 'warning' })

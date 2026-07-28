@@ -136,9 +136,9 @@ export function formatHuman(result: PlanResult, opts: { color?: boolean } = {}):
     for (const sig of result.agent.signals) lines.push(`           ${sig}`)
   }
 
-  if (result.approved && (criticals.length > 0 || warnings.length > 0)) {
+  if (result.overrideApplied && (criticals.length > 0 || warnings.length > 0)) {
     lines.push('')
-    lines.push('[APPROVED] A human approved these changes; the gate is passing.')
+    lines.push('[OVERRIDE] The prodgate-approved label override is active. Findings remain recorded, but the gate is passing.')
   }
 
   lines.push('')
@@ -146,7 +146,7 @@ export function formatHuman(result: PlanResult, opts: { color?: boolean } = {}):
   const verdict = auditBannerText(result)
     ? c.yellow('AUDIT (would block)')
     : result.verdict === 'pass' ? c.green('PASS') : c.red('FAIL')
-  lines.push(`Verdict: ${verdict}${result.approved && result.verdict === 'pass' && (criticals.length || warnings.length) ? ' (approved)' : ''}`)
+  lines.push(`Verdict: ${verdict}${result.overrideApplied && result.verdict === 'pass' && (criticals.length || warnings.length) ? ' (override)' : ''}`)
   lines.push(`Mode: ${result.enforcementMode}, fail-on: ${result.failOn}`)
   if (result.configPath) lines.push(`Config: ${result.configPath}`)
   if (result.planHash) lines.push(`Plan hash: ${result.planHash}`)
@@ -206,12 +206,12 @@ export function formatGithub(result: PlanResult): string {
     lines.push(note)
   }
 
-  if (result.approved && result.findings.length > 0) {
+  if (result.overrideApplied && result.findings.length > 0) {
     lines.push('')
-    lines.push('A human approved these changes via the `prodgate-approved` label; the gate is passing.')
+    lines.push('The `prodgate-approved` label override is active. Findings remain recorded, but the gate is passing.')
   } else if (criticals.length > 0) {
     lines.push('')
-    lines.push('To approve: add the `prodgate-approved` label to this PR, then re-run the check.')
+    lines.push('To override: add the `prodgate-approved` label to this PR and re-run the check.')
   }
 
   const footer: string[] = [`mode: ${result.enforcementMode}`, `fail-on: ${result.failOn}`]

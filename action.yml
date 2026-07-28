@@ -28,6 +28,15 @@ outputs:
   would-block:
     description: 'true if this would block a merge in enforce mode'
     value: ${{ steps.prodgate.outputs.would-block }}
+  execution-outcome:
+    description: 'allowed, blocked, reported, or overridden'
+    value: ${{ steps.prodgate.outputs.execution-outcome }}
+  enforcement-mode:
+    description: 'audit or enforce'
+    value: ${{ steps.prodgate.outputs.enforcement-mode }}
+  exit-code:
+    description: 'The CLI exit code for the classification (0 or 1)'
+    value: ${{ steps.prodgate.outputs.exit-code }}
   critical-count:
     description: 'Number of critical findings'
     value: ${{ steps.prodgate.outputs.critical-count }}
@@ -64,40 +73,24 @@ runs:
           git log --format='%B' -n 50 HEAD > "$RUNNER_TEMP/prodgate-commits.txt" 2>/dev/null || true
         fi
 
-    - name: Reset approval on new commits
+    - name: Clear a stale override label after a new commit
       if: ${{ github.event_name == 'pull_request' && github.event.action == 'synchronize' }}
       continue-on-error: true
       uses: actions/github-script@v9
       with:
         github-token: ${{ inputs.github-token }}
         script: |
-          // Best-effort cleanup: clear the stale label after a new commit so the PR
-          // reads correctly. Enforcement does not depend on this (the approval step
-          // fails closed on synchronize), so a fork PR's read-only-token 403 is fine.
+          // Best-effort cleanup so the label does not linger visually after a new
+          // commit. Enforcement does not depend on this: the override is honored only
+          // in the run triggered by the labeled event (see PRODGATE_OVERRIDE below), so
+          // a leftover label on a later event grants nothing, and a fork PR's read-only
+          // 403 here is harmless.
           const { owner, repo } = context.repo
           try {
             await github.rest.issues.removeLabel({ owner, repo, issue_number: context.issue.number, name: 'prodgate-approved' })
           } catch (e) {
-            if (e.status !== 404) throw e // 404 = label was not present, nothing to reset
+            if (e.status !== 404) throw e
           }
-
-    - name: Resolve approval from live labels
-      id: approval
-      if: ${{ github.event_name == 'pull_request' }}
-      uses: actions/github-script@v9
-      with:
-        github-token: ${{ inputs.github-token }}
-        script: |
-          // Enforcement lives here (a read + logic), not in the label-removal step
-          // above (a write that 403s on fork PRs). On a new commit the plan changed,
-          // so any prior approval is stale regardless of label state: fail closed.
-          if (context.payload.action === 'synchronize') { core.setOutput('approved', 'false'); return }
-          // Otherwise read labels live from the API rather than the event payload, so
-          // adding the label and re-running passes the gate without a new commit.
-          const { owner, repo } = context.repo
-          const { data } = await github.rest.issues.listLabelsOnIssue({ owner, repo, issue_number: context.issue.number })
-          const approved = data.some(l => l.name === 'prodgate-approved')
-          core.setOutput('approved', approved ? 'true' : 'false')
 
     - name: Run Prodgate
       id: prodgate
@@ -109,7 +102,14 @@ runs:
         PRODGATE_PR_AUTHOR: ${{ github.event.pull_request.user.login }}
         PRODGATE_BRANCH: ${{ github.head_ref }}
         PRODGATE_PR_BODY: ${{ github.event.pull_request.body }}
-        PRODGATE_APPROVED: ${{ steps.approval.outputs.approved }}
+        # The override is honored only in the run triggered by adding the
+        # prodgate-approved label. Any other event (open, reopen, synchronize, re-run)
+        # is not an override, so a stale label cannot pass a plan a human has not just
+        # signed off. After a new commit the label must be removed and re-added.
+        PRODGATE_OVERRIDE: ${{ github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'prodgate-approved' }}
+        PRODGATE_OVERRIDE_LABEL: 'prodgate-approved'
+        PRODGATE_OVERRIDE_ACTOR: ${{ github.actor }}
+        PRODGATE_COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       # Pass the plan path through the environment rather than templating it into the
       # command, so a crafted path cannot inject shell.
       run: |
@@ -146,10 +146,23 @@ runs:
             await github.rest.issues.createComment({ owner, repo, issue_number, body })
           }
 
-    - name: Fail the check if the gate triggered
+    - name: Set the check status
       shell: bash
+      env:
+        EXIT_CODE: ${{ steps.prodgate.outputs.exit_code }}
       run: |
-        if [ "${{ steps.prodgate.outputs.exit_code }}" != "0" ]; then
-          echo "Prodgate blocked this plan. Add the 'prodgate-approved' label to override."
-          exit 1
-        fi
+        case "$EXIT_CODE" in
+          0) exit 0 ;;
+          1)
+            echo "Prodgate blocked this plan because the configured policy failed. Add the 'prodgate-approved' label to record a manual override."
+            exit 1
+            ;;
+          2)
+            echo "Prodgate could not evaluate this plan because of an input or configuration error."
+            exit 2
+            ;;
+          *)
+            echo "Prodgate failed unexpectedly with exit code $EXIT_CODE."
+            exit "$EXIT_CODE"
+            ;;
+        esac

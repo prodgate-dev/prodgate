@@ -60,7 +60,7 @@ jobs:
         run: rm -f plan.json plan.tfplan
 ```
 
-On every PR, Prodgate posts a one-line plan summary (what the change adds, changes, replaces, and destroys), so the check is useful even when nothing is wrong. On a destructive or dangerous change, it fails the check and posts the detail. A human approves by adding the **`prodgate-approved`** label (GitHub records who and when); re-run the check and the gate passes.
+On every PR, Prodgate posts a one-line plan summary (what the change adds, changes, replaces, and destroys), so the check is useful even when nothing is wrong. On a destructive or dangerous change, it fails the check and posts the detail. To let a flagged change through, add the **`prodgate-approved`** label to record a manual override (see below).
 
 **Audit-first rollout.** Prodgate enforces by default: a critical finding fails the check. On an existing or production repository, run it in audit mode for a week first by adding `mode: audit` to the step. In audit mode the check reports what it would have blocked but does not fail the build. When you are confident it is not noisy, remove that line to enable enforcement.
 
@@ -126,11 +126,11 @@ A Terraform plan can contain secrets in plaintext (passwords, keys, tokens), eve
 
 When a flagged change looks agent-generated, Prodgate says so and shows the signal it matched (a `Co-Authored-By` trailer from Claude Code / Cursor, a bot author, an agent branch prefix). It is a transparent flag, never a black box.
 
-## Approval (recorded sign-off)
+## Manual override using a GitHub label
 
-Destructive changes require a human to approve them. In the Action, that is the `prodgate-approved` label; GitHub records who applied it and when. The finding is still reported; only the verdict flips to pass.
+Adding the `prodgate-approved` label applies a repository-controlled manual override: the finding is still reported, but the gate passes. It is honored only in the run triggered by adding the label. Opening, reopening, pushing a new commit, or re-running is not an override, so a leftover label never passes a plan on its own. After a new commit, remove and re-add the label.
 
-Approval is bound to the reviewed plan: pushing a new commit (a `synchronize` event) removes the label automatically, so an approval never carries over to a plan a human has not seen. The PR comment includes a `Plan hash` so you can confirm which plan was approved.
+This is an override, not a verified approval. GitHub repository permissions determine who can apply the label. Prodgate does not verify separation of duties, team membership, whether the actor reviewed the plan, or whether the plan later applied matches this one. The report and the JSON envelope record the label, the triggering actor, and the plan head SHA so the override is auditable, not that it is authorized.
 
 ## Configuration
 
@@ -155,7 +155,7 @@ Zero-config by default. For overrides, add `prodgate.config.json`:
 | `--output <file>` | Write output to a file |
 | `--mode <mode>` | `audit` or `enforce` (default `enforce`) |
 | `--fail-on <level>` | `critical`, `warning`, or `never` (default `critical`) |
-| `--approved` | Treat the change as human-approved |
+| `--override` | Record a manual override (gate passes; findings still reported) |
 | `--config <file>` | Path to `prodgate.config.json` |
 
 ## JSON output
@@ -168,14 +168,42 @@ Zero-config by default. For overrides, add `prodgate.config.json`:
   "engine": { "name": "prodgate", "version": "1.0.0" },
   "policy": { "version": "aws-default-v1", "digest": "sha256:..." },
   "plan": { "formatVersion": "1.2", "terraformVersion": "1.9.5", "hash": "sha256:..." },
-  "enforcement": { "mode": "enforce", "failOn": "critical", "policyVerdict": "fail", "wouldBlock": true },
-  "verdict": "fail",
+  "enforcement": { "mode": "enforce", "failOn": "critical", "policyVerdict": "fail", "wouldBlock": true, "executionOutcome": "blocked" },
   "stats": { "resourcesScanned": 9, "created": 6, "updated": 2, "replaced": 0, "destroyed": 1, "criticalCount": 1, "warningCount": 0 },
   "findings": [{ "ruleId": "PG-DESTROY-STATEFUL", "severity": "CRITICAL", "category": "data_loss", "confidence": "high", "resource": { "address": "aws_db_instance.main", "type": "aws_db_instance" }, "action": "delete", "evidence": [{ "field": "change.actions", "observed": "delete" }] }]
 }
 ```
 
-An invalid plan or config instead prints `{ "error": { "code": "...", "message": "..." } }` and exits 2. Under GitHub Actions the envelope also carries a `source` block (repository, commit, workflow run, pull request).
+`enforcement.executionOutcome` is `allowed`, `blocked`, `reported` (audit mode saw a failure), or `overridden`. `enforcement.policyVerdict` is the decision from the findings, independent of mode. When an override is applied, `enforcement.override` records the label, triggering actor, and plan head SHA. Findings are sorted by severity, then rule id, resource address, and action, so the order is stable across runs. `stats.destructive` and `stats.dangerous` count findings, not resources.
+
+An invalid plan or config instead prints `{ "error": { "code": "...", "message": "..." } }` and exits 2. Under GitHub Actions the envelope also carries a `source` block (repository, commit SHA of the PR head, workflow run, pull request). See [docs/json-envelope.md](docs/json-envelope.md) for the full field reference and compatibility rules.
+
+## Action outputs
+
+The Action exposes outputs so later steps can react without parsing the comment:
+
+| Output | Meaning |
+|--------|---------|
+| `policy-verdict` | `pass` or `fail` from the findings and fail-on |
+| `would-block` | `true` if this would block in enforce mode |
+| `execution-outcome` | `allowed`, `blocked`, `reported`, or `overridden` |
+| `enforcement-mode` | `audit` or `enforce` |
+| `exit-code` | `0` or `1` for the classification |
+| `critical-count`, `warning-count` | finding counts |
+| `plan-hash`, `policy-digest` | the plan and effective-policy digests |
+| `report-path` | path to the Markdown report |
+| `engine-version` | the Prodgate version that ran |
+
+```yaml
+      - name: Prodgate
+        id: prodgate
+        uses: prodgate-dev/prodgate@v1
+        with:
+          plan-json: plan.json
+      - name: Notify on a block
+        if: ${{ steps.prodgate.outputs.execution-outcome == 'blocked' }}
+        run: echo "Blocked ${{ steps.prodgate.outputs.critical-count }} critical change(s)"
+```
 
 ## Trust boundary
 

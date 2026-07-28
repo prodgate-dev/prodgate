@@ -99,11 +99,26 @@ check('json findings carry rule id, category, confidence, evidence', (() => {
     return f.ruleId === 'PG-DESTROY-STATEFUL' && f.category === 'data_loss' && f.confidence === 'high' && Array.isArray(f.evidence) && f.evidence.length > 0
   } catch { return false }
 })())
-check('audit json reports wouldBlock without failing', (() => {
+check('audit json reports would-block via executionOutcome', (() => {
   const r = run(['check', fixture('delete-db.json'), '--mode', 'audit', '--json'])
   try {
     const o = JSON.parse(r.stdout)
-    return r.code === 0 && o.enforcement.policyVerdict === 'fail' && o.enforcement.wouldBlock === true && o.verdict === 'pass'
+    return r.code === 0 && o.enforcement.policyVerdict === 'fail' && o.enforcement.wouldBlock === true && o.enforcement.executionOutcome === 'reported'
+  } catch { return false }
+})())
+check('override envelope records outcome and metadata', (() => {
+  const r = run(['check', fixture('delete-db.json'), '--override', '--json'])
+  try {
+    const o = JSON.parse(r.stdout)
+    return r.code === 0 && o.enforcement.executionOutcome === 'overridden' && o.enforcement.override.applied === true
+  } catch { return false }
+})())
+check('envelope findings are severity-sorted', (() => {
+  // large-mixed has a critical and a warning; critical must come first.
+  const r = run(['check', fixture('large-mixed-plan.json'), '--json'])
+  try {
+    const f = JSON.parse(r.stdout).findings
+    return f.length >= 2 && f[0].severity === 'CRITICAL' && f[f.length - 1].severity === 'WARNING'
   } catch { return false }
 })())
 
@@ -156,8 +171,10 @@ check('audit json reports wouldBlock without failing', (() => {
   run(['check', fixture('delete-db.json'), '--outputs-file', outFile])
   let text = ''
   try { text = fs.readFileSync(outFile, 'utf8') } catch { text = '' }
-  check('outputs-file has policy-verdict, would-block, plan-hash, engine-version',
-    /policy-verdict=fail/.test(text) && /would-block=true/.test(text) && /plan-hash=sha256:/.test(text) && /engine-version=/.test(text))
+  const keys = ['policy-verdict', 'would-block', 'execution-outcome', 'enforcement-mode', 'exit-code', 'critical-count', 'warning-count', 'plan-hash', 'policy-digest', 'report-path', 'engine-version']
+  check('outputs-file has every declared key', keys.every(k => new RegExp('(^|\\n)' + k + '=').test(text)))
+  check('outputs-file values are correct for a blocked plan',
+    /policy-verdict=fail/.test(text) && /would-block=true/.test(text) && /execution-outcome=blocked/.test(text) && /exit-code=1/.test(text) && /critical-count=1/.test(text) && /engine-version=/.test(text))
 }
 
 console.log('\n' + '─'.repeat(50))

@@ -52,10 +52,22 @@ export type Config = {
 
 export type EnforcementMode = 'audit' | 'enforce'
 export type FailOn = 'critical' | 'warning' | 'never'
+export type ExecutionOutcome = 'allowed' | 'blocked' | 'reported' | 'overridden'
+// A recorded manual override. It is not a verified approval: it only states which
+// label was present and which actor triggered the run, not that they reviewed the
+// plan or are authorized.
+export type OverrideInfo = {
+  applied: boolean
+  mechanism?: string
+  label?: string
+  workflowActor?: string
+  headSha?: string
+}
 
 export type ClassifyOptions = {
   agent?: AgentInfo
-  approved?: boolean
+  override?: OverrideInfo
+  approved?: boolean // deprecated alias for override.applied
   strict?: boolean // deprecated alias for failOn: 'warning'
   mode?: EnforcementMode
   failOn?: FailOn
@@ -83,7 +95,10 @@ export type PlanResult = {
   // The enforcement outcome that drives the exit code. It is 'fail' only when enforce
   // mode actually blocks; in audit mode it stays 'pass' even when wouldBlock is true.
   verdict: 'pass' | 'fail'
-  approved: boolean
+  // What actually happened, unambiguously, for integrations.
+  executionOutcome: ExecutionOutcome
+  overrideApplied: boolean
+  override?: OverrideInfo
   agent: AgentInfo
   planHash?: string
   configPath?: string
@@ -182,7 +197,7 @@ export function classifyPlan(changes: ResourceChange[], opts: ClassifyOptions = 
             action,
             reason: `stateful resource in a declared non-production environment (tagged ${npTag}); ${action} may cause data loss, and recovery depends on backups, snapshots, replication, retention, or versioning that Prodgate cannot verify from this plan`,
             summary: `${verb} a stateful resource in a declared non-production environment (data-loss risk)`,
-            evidence: [...destroyEvidence, { field: 'beforeTags.Environment', observed: npTag }],
+            evidence: [...destroyEvidence, { field: 'before.environmentClassification', observed: 'non_production' }],
             agentAuthored: agent.likelyAgent,
           })
         } else if (npTag && (prodSignal || protectionOn)) {
@@ -199,7 +214,11 @@ export function classifyPlan(changes: ResourceChange[], opts: ClassifyOptions = 
             action,
             reason: `conflicting environment signals (declared non-production ${npTag} but ${conflict}); failing closed because this destructive change may affect production data`,
             summary: `${verb} a stateful resource (conflicting signals, data-loss risk)`,
-            evidence: [...destroyEvidence, { field: 'beforeTags.Environment', observed: npTag }],
+            evidence: [
+              ...destroyEvidence,
+              { field: 'before.environmentClassification', observed: 'conflicting' },
+              ...(protectionOn ? [{ field: 'before.deletionProtection', observed: 'enabled' }] : []),
+            ],
             agentAuthored: agent.likelyAgent,
           })
         } else {
@@ -228,7 +247,7 @@ export function classifyPlan(changes: ResourceChange[], opts: ClassifyOptions = 
           action,
           reason: 'production-tagged resource',
           summary: `${verb} a production resource`,
-          evidence: destroyEvidence,
+          evidence: [...destroyEvidence, { field: 'before.environmentClassification', observed: 'production' }],
           agentAuthored: agent.likelyAgent,
         })
       } else {
@@ -255,7 +274,7 @@ export function classifyPlan(changes: ResourceChange[], opts: ClassifyOptions = 
       const action: 'create' | 'update' | 'replace' = rc.changeKind
       for (const m of matchDangerousMutations(rc)) {
         findings.push({
-          ruleId: m.ruleId ?? 'PG-MUTATION',
+          ruleId: m.ruleId,
           severity: m.severity,
           category: m.category,
           confidence: m.confidence,
@@ -277,7 +296,8 @@ export function classifyPlan(changes: ResourceChange[], opts: ClassifyOptions = 
   const destructive = findings.filter(f => f.type !== 'dangerous_mutation').length
   const dangerous = findings.filter(f => f.type === 'dangerous_mutation').length
 
-  const approved = !!opts.approved
+  const override: OverrideInfo | undefined = opts.override ?? (opts.approved ? { applied: true, mechanism: 'manual' } : undefined)
+  const overrideApplied = !!override?.applied
   const failOn: FailOn = opts.failOn ?? (opts.strict ? 'warning' : 'critical')
   const mode: EnforcementMode = opts.mode ?? 'enforce'
   const policyBlocking =
@@ -285,9 +305,14 @@ export function classifyPlan(changes: ResourceChange[], opts: ClassifyOptions = 
     : failOn === 'warning' ? criticalCount > 0 || warningCount > 0
     : criticalCount > 0
   const policyVerdict: 'pass' | 'fail' = policyBlocking ? 'fail' : 'pass'
-  const wouldBlock = policyBlocking && !approved
+  const wouldBlock = policyBlocking && !overrideApplied
   const blocked = mode === 'enforce' && wouldBlock
   const verdict: 'pass' | 'fail' = blocked ? 'fail' : 'pass'
+  const executionOutcome: ExecutionOutcome =
+    !policyBlocking ? 'allowed'
+    : overrideApplied ? 'overridden'
+    : mode === 'audit' ? 'reported'
+    : 'blocked'
 
   return {
     findings,
@@ -298,7 +323,9 @@ export function classifyPlan(changes: ResourceChange[], opts: ClassifyOptions = 
     failOn,
     wouldBlock,
     verdict,
-    approved,
+    executionOutcome,
+    overrideApplied,
+    override,
     agent,
     planHash: opts.planHash,
     configPath: opts.configPath,

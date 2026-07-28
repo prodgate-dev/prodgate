@@ -47,7 +47,8 @@ program
   .option('--fail-on <level>', 'Block on: critical, warning, or never (default critical)')
   .option('--strict', 'Deprecated alias for --fail-on warning')
   .option('--color', 'Force ANSI color in the report even when output is not a terminal')
-  .option('--approved', 'Treat the change as human-approved (gate passes; findings still reported)')
+  .option('--override', 'Record a manual override (gate passes; findings still reported)')
+  .option('--approved', 'Deprecated alias for --override')
   .option('--config <file>', 'Path to prodgate.config.json')
   .option('--pr-author <author>', 'PR author login (for agent detection)')
   .option('--branch <branch>', 'Head branch name (for agent detection)')
@@ -93,7 +94,17 @@ program
       prBody: readMaybe(options.prBodyFile) ?? process.env.PRODGATE_PR_BODY,
     }
     const agent = detectAgent(meta)
-    const approved = !!options.approved || process.env.PRODGATE_APPROVED === 'true'
+    const envOverride = process.env.PRODGATE_OVERRIDE === 'true' || process.env.PRODGATE_APPROVED === 'true'
+    const flagOverride = !!options.override || !!options.approved
+    const override = envOverride || flagOverride
+      ? {
+          applied: true,
+          mechanism: envOverride ? 'github_label' : 'manual',
+          label: envOverride ? (process.env.PRODGATE_OVERRIDE_LABEL || 'prodgate-approved') : undefined,
+          workflowActor: process.env.PRODGATE_OVERRIDE_ACTOR || undefined,
+          headSha: process.env.PRODGATE_COMMIT_SHA || undefined,
+        }
+      : undefined
     const config = loadConfig(options.config)
     const configPath = config ? (options.config ?? 'prodgate.config.json') : undefined
 
@@ -103,7 +114,7 @@ program
     const failOn = resolveFailOn(options.failOn, !!options.strict, config)
     const policyDigest = computePolicyDigest(mode, failOn, config)
 
-    const result = classifyPlan(changes, { agent, approved, mode, failOn, config, planHash, configPath, policyDigest })
+    const result = classifyPlan(changes, { agent, override, mode, failOn, config, planHash, configPath, policyDigest })
 
     // Color the terminal report only, and never the GitHub or JSON output. Default
     // to a TTY that is not being redirected to a file; NO_COLOR disables it, and
@@ -246,8 +257,10 @@ function computePolicyDigest(mode: EnforcementMode, failOn: FailOn, config?: Con
 function writeOutputs(file: string, result: PlanResult, reportPath?: string): void {
   const pairs: [string, string][] = [
     ['policy-verdict', result.policyVerdict],
-    ['verdict', result.verdict],
     ['would-block', String(result.wouldBlock)],
+    ['execution-outcome', result.executionOutcome],
+    ['enforcement-mode', result.enforcementMode],
+    ['exit-code', String(result.verdict === 'fail' ? 1 : 0)],
     ['critical-count', String(result.stats.criticalCount)],
     ['warning-count', String(result.stats.warningCount)],
     ['plan-hash', result.planHash ?? ''],
@@ -263,11 +276,26 @@ function buildSource(): Record<string, unknown> | undefined {
   if (process.env.GITHUB_ACTIONS !== 'true') return undefined
   const src: Record<string, unknown> = {}
   if (process.env.GITHUB_REPOSITORY) src.repository = process.env.GITHUB_REPOSITORY
-  if (process.env.GITHUB_SHA) src.commitSha = process.env.GITHUB_SHA
+  // Prefer the PR head SHA the Action passes; GITHUB_SHA is a synthetic merge commit
+  // on pull_request events. Keep the workflow SHA too when they differ.
+  const headSha = process.env.PRODGATE_COMMIT_SHA || process.env.GITHUB_SHA
+  if (headSha) src.commitSha = headSha
+  if (process.env.GITHUB_SHA && process.env.GITHUB_SHA !== headSha) src.workflowSha = process.env.GITHUB_SHA
   if (process.env.GITHUB_RUN_ID) src.workflowRunId = process.env.GITHUB_RUN_ID
   const pr = /refs\/pull\/(\d+)\//.exec(process.env.GITHUB_REF ?? '')
   if (pr) src.pullRequest = Number(pr[1])
   return Object.keys(src).length ? src : undefined
+}
+
+// A stable, defined order for the envelope, independent of resource order in the
+// plan: severity, then rule id, resource address, and action.
+function sortFindings(findings: PlanResult['findings']): PlanResult['findings'] {
+  const rank: Record<string, number> = { CRITICAL: 0, WARNING: 1, INFO: 2 }
+  return [...findings].sort((a, b) =>
+    (rank[a.severity] - rank[b.severity]) ||
+    a.ruleId.localeCompare(b.ruleId) ||
+    a.resource.address.localeCompare(b.resource.address) ||
+    a.action.localeCompare(b.action))
 }
 
 // The stable, versioned evaluation envelope emitted by --json. It carries no raw
@@ -276,20 +304,22 @@ function buildSource(): Record<string, unknown> | undefined {
 function buildEnvelope(result: PlanResult, planMeta: { formatVersion?: string; terraformVersion?: string }) {
   const policy: Record<string, unknown> = { version: POLICY_VERSION, digest: result.policyDigest }
   if (result.configPath) policy.configPath = result.configPath
+  const enforcement: Record<string, unknown> = {
+    mode: result.enforcementMode,
+    failOn: result.failOn,
+    policyVerdict: result.policyVerdict,
+    wouldBlock: result.wouldBlock,
+    executionOutcome: result.executionOutcome,
+  }
+  if (result.override) enforcement.override = result.override
   const envelope: Record<string, unknown> = {
     schemaVersion: '1.0',
     engine: { name: 'prodgate', version: ENGINE_VERSION },
     policy,
     plan: { formatVersion: planMeta.formatVersion, terraformVersion: planMeta.terraformVersion, hash: result.planHash },
-    enforcement: {
-      mode: result.enforcementMode,
-      failOn: result.failOn,
-      policyVerdict: result.policyVerdict,
-      wouldBlock: result.wouldBlock,
-    },
-    verdict: result.verdict,
+    enforcement,
     stats: result.stats,
-    findings: result.findings,
+    findings: sortFindings(result.findings),
     disruptions: result.disruptions,
     suppressions: result.suppressions,
   }

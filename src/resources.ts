@@ -82,8 +82,8 @@ export type Confidence = 'high' | 'medium' | 'low'
 // raw or sensitive attribute values.
 export type Evidence = { field: string; observed: string }
 
-export type MutationMatch = {
-  ruleId?: string
+// What a rule's evaluate returns. The ruleId is attached afterward from the rule.
+export type MutationOutcome = {
   severity: Severity
   category: RiskCategory
   confidence: Confidence
@@ -91,11 +91,13 @@ export type MutationMatch = {
   attribute: string
   evidence: Evidence[]
 }
+// A matched rule, with its id required so a finding can never lack a rule id.
+export type MutationMatch = MutationOutcome & { ruleId: string }
 
 export type DangerousRule = {
   id: string
   appliesTo: (type: string) => boolean
-  evaluate: (before: any, after: any, afterUnknown: any) => MutationMatch | null
+  evaluate: (before: any, after: any, afterUnknown: any) => MutationOutcome | null
 }
 
 // ---- helpers for the security-group rules ----
@@ -118,10 +120,16 @@ function ingressList(v: any): any[] {
     return [v]
   return []
 }
-function isWorldOpen(ing: any): boolean {
+type WorldCidr = '0.0.0.0/0' | '::/0'
+// Which world-open address families a rule exposes. Retained so the finding names
+// the actual CIDR rather than assuming IPv4.
+function worldOpenCidrs(ing: any): WorldCidr[] {
+  const out: WorldCidr[] = []
   const v4 = (Array.isArray(ing?.cidr_blocks) && ing.cidr_blocks.includes('0.0.0.0/0')) || ing?.cidr_ipv4 === '0.0.0.0/0'
   const v6 = (Array.isArray(ing?.ipv6_cidr_blocks) && ing.ipv6_cidr_blocks.includes('::/0')) || ing?.cidr_ipv6 === '::/0'
-  return v4 || v6
+  if (v4) out.push('0.0.0.0/0')
+  if (v6) out.push('::/0')
+  return out
 }
 function portRange(ing: any): { from: number; to: number } {
   // protocol "-1"/"all" means every protocol and every port in AWS, regardless of
@@ -133,8 +141,16 @@ function portRange(ing: any): { from: number; to: number } {
   const to = Number(ing?.to_port ?? 65535)
   return { from: isNaN(from) ? 0 : from, to: isNaN(to) ? 65535 : to }
 }
-function openWorldRanges(v: any): { from: number; to: number }[] {
-  return ingressList(v).filter(isWorldOpen).map(portRange)
+type WorldOpenRange = { from: number; to: number; cidr: WorldCidr }
+function openWorldRanges(v: any): WorldOpenRange[] {
+  const out: WorldOpenRange[] = []
+  for (const ing of ingressList(v)) {
+    const cidrs = worldOpenCidrs(ing)
+    if (cidrs.length === 0) continue
+    const r = portRange(ing)
+    for (const cidr of cidrs) out.push({ from: r.from, to: r.to, cidr })
+  }
+  return out
 }
 function coversSensitive(r: { from: number; to: number }): boolean {
   return SENSITIVE_PORTS.some(p => p >= r.from && p <= r.to) || (r.from === 0 && r.to >= 65535)
@@ -190,7 +206,7 @@ function ingressCidrUnknown(afterUnknown: any): boolean {
   }
   return false
 }
-function indeterminate(attribute: string, what: string): MutationMatch {
+function indeterminate(attribute: string, what: string): MutationOutcome {
   return {
     severity: 'WARNING',
     category: 'unknown',
@@ -270,16 +286,17 @@ export const DANGEROUS_MUTATIONS: DangerousRule[] = [
       const after = openWorldRanges(a)
       if (after.length > 0) {
         const before = openWorldRanges(b)
-        const newly = after.filter(r => !before.some(q => q.from === r.from && q.to === r.to))
+        const newly = after.filter(r => !before.some(q => q.from === r.from && q.to === r.to && q.cidr === r.cidr))
         if (newly.length > 0) {
           const sensitive = newly.some(coversSensitive)
+          const cidrs = [...new Set(newly.map(r => r.cidr))].join(' and ')
           return {
             severity: sensitive ? 'CRITICAL' : 'WARNING',
             category: 'exposure',
             confidence: sensitive ? 'high' : 'medium',
-            summary: sensitive ? 'opens a sensitive port to 0.0.0.0/0' : 'opens a security group to 0.0.0.0/0',
+            summary: sensitive ? `opens a sensitive port to ${cidrs}` : `opens a security group to ${cidrs}`,
             attribute: 'ingress',
-            evidence: [{ field: 'ingress.cidr', observed: sensitive ? '0.0.0.0/0 to a sensitive port' : '0.0.0.0/0' }],
+            evidence: [{ field: 'ingress.cidr', observed: sensitive ? `${cidrs} to a sensitive port` : cidrs }],
           }
         }
       }
