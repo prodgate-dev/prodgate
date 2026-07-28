@@ -150,6 +150,16 @@ check('audit json reports wouldBlock without failing', (() => {
   check('changing an exception changes the digest', digestOf([]) !== digestOf(['--config', cfg]))
 }
 
+// --outputs-file writes the CI key=value pairs the Action exposes.
+{
+  const outFile = path.join(os.tmpdir(), `pg-outputs-${process.pid}-${counter++}.txt`)
+  run(['check', fixture('delete-db.json'), '--outputs-file', outFile])
+  let text = ''
+  try { text = fs.readFileSync(outFile, 'utf8') } catch { text = '' }
+  check('outputs-file has policy-verdict, would-block, plan-hash, engine-version',
+    /policy-verdict=fail/.test(text) && /would-block=true/.test(text) && /plan-hash=sha256:/.test(text) && /engine-version=/.test(text))
+}
+
 console.log('\n' + '─'.repeat(50))
 if (failures === 0) {
   console.log('All CLI tests passed')

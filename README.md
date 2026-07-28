@@ -62,6 +62,16 @@ jobs:
 
 On every PR, Prodgate posts a one-line plan summary (what the change adds, changes, replaces, and destroys), so the check is useful even when nothing is wrong. On a destructive or dangerous change, it fails the check and posts the detail. A human approves by adding the **`prodgate-approved`** label (GitHub records who and when); re-run the check and the gate passes.
 
+**Audit-first rollout.** Prodgate enforces by default: a critical finding fails the check. On an existing or production repository, run it in audit mode for a week first by adding `mode: audit` to the step. In audit mode the check reports what it would have blocked but does not fail the build. When you are confident it is not noisy, remove that line to enable enforcement.
+
+```yaml
+      - name: Prodgate
+        uses: prodgate-dev/prodgate@v1
+        with:
+          plan-json: plan.json
+          mode: audit   # remove to enforce
+```
+
 ## Usage (CLI)
 
 ```bash

@@ -8,14 +8,44 @@ inputs:
   plan-json:
     description: 'Path to a `terraform show -json` plan file'
     required: true
-  strict:
-    description: 'Also fail on warnings'
+  mode:
+    description: 'Enforcement mode: audit or enforce'
     required: false
-    default: 'false'
+    default: 'enforce'
+  fail-on:
+    description: 'Block on: critical, warning, or never'
+    required: false
+    default: 'critical'
   github-token:
     description: 'Token used to post the PR comment'
     required: false
     default: ${{ github.token }}
+
+outputs:
+  policy-verdict:
+    description: 'pass or fail from the findings and fail-on threshold'
+    value: ${{ steps.prodgate.outputs.policy-verdict }}
+  would-block:
+    description: 'true if this would block a merge in enforce mode'
+    value: ${{ steps.prodgate.outputs.would-block }}
+  critical-count:
+    description: 'Number of critical findings'
+    value: ${{ steps.prodgate.outputs.critical-count }}
+  warning-count:
+    description: 'Number of warning findings'
+    value: ${{ steps.prodgate.outputs.warning-count }}
+  plan-hash:
+    description: 'sha256 of the evaluated plan'
+    value: ${{ steps.prodgate.outputs.plan-hash }}
+  policy-digest:
+    description: 'sha256 of the effective policy'
+    value: ${{ steps.prodgate.outputs.policy-digest }}
+  report-path:
+    description: 'Path to the written Markdown report'
+    value: ${{ steps.prodgate.outputs.report-path }}
+  engine-version:
+    description: 'Prodgate version that produced the result'
+    value: ${{ steps.prodgate.outputs.engine-version }}
 
 runs:
   using: 'composite'
@@ -73,16 +103,23 @@ runs:
       id: prodgate
       shell: bash
       env:
+        PLAN_JSON: ${{ inputs.plan-json }}
+        MODE: ${{ inputs.mode }}
+        FAIL_ON: ${{ inputs.fail-on }}
         PRODGATE_PR_AUTHOR: ${{ github.event.pull_request.user.login }}
         PRODGATE_BRANCH: ${{ github.head_ref }}
         PRODGATE_PR_BODY: ${{ github.event.pull_request.body }}
         PRODGATE_APPROVED: ${{ steps.approval.outputs.approved }}
+      # Pass the plan path through the environment rather than templating it into the
+      # command, so a crafted path cannot inject shell.
       run: |
         set +e
-        npx --yes prodgate@^1 check "${{ inputs.plan-json }}" \
-          ${{ inputs.strict == 'true' && '--strict' || '' }} \
+        npx --yes prodgate@^1 check "$PLAN_JSON" \
+          --mode "$MODE" \
+          --fail-on "$FAIL_ON" \
           --commits-file "$RUNNER_TEMP/prodgate-commits.txt" \
-          --github --output "$RUNNER_TEMP/prodgate.md"
+          --github --output "$RUNNER_TEMP/prodgate.md" \
+          --outputs-file "$GITHUB_OUTPUT"
         echo "exit_code=$?" >> "$GITHUB_OUTPUT"
 
     - name: Post or update PR comment

@@ -42,6 +42,7 @@ program
   .option('--json', 'Output raw JSON')
   .option('--github', 'Output GitHub-flavored markdown for PR comments')
   .option('--output <file>', 'Write output to a file')
+  .option('--outputs-file <file>', 'Append key=value CI outputs to this file (used by the Action)')
   .option('--mode <mode>', 'Enforcement mode: audit or enforce (default enforce)')
   .option('--fail-on <level>', 'Block on: critical, warning, or never (default critical)')
   .option('--strict', 'Deprecated alias for --fail-on warning')
@@ -122,6 +123,10 @@ program
       fs.writeFileSync(options.output, output)
     } else {
       console.log(output)
+    }
+
+    if (options.outputsFile) {
+      writeOutputs(options.outputsFile, result, options.output)
     }
 
     if (result.verdict === 'fail') {
@@ -234,6 +239,23 @@ function computePolicyDigest(mode: EnforcementMode, failOn: FailOn, config?: Con
   const effective = { policyVersion: POLICY_VERSION, mode, failOn, config: config ?? {} }
   const json = JSON.stringify(canonicalize(effective))
   return 'sha256:' + crypto.createHash('sha256').update(json).digest('hex')
+}
+
+// Append key=value CI outputs so a GitHub Action can expose them. The Action points
+// this at $GITHUB_OUTPUT; the format is the same key=value that GitHub expects.
+function writeOutputs(file: string, result: PlanResult, reportPath?: string): void {
+  const pairs: [string, string][] = [
+    ['policy-verdict', result.policyVerdict],
+    ['verdict', result.verdict],
+    ['would-block', String(result.wouldBlock)],
+    ['critical-count', String(result.stats.criticalCount)],
+    ['warning-count', String(result.stats.warningCount)],
+    ['plan-hash', result.planHash ?? ''],
+    ['policy-digest', result.policyDigest ?? ''],
+    ['report-path', reportPath ?? ''],
+    ['engine-version', ENGINE_VERSION],
+  ]
+  fs.appendFileSync(file, pairs.map(([k, v]) => `${k}=${v}`).join('\n') + '\n')
 }
 
 // Source metadata, only when running inside GitHub Actions. Omitted for local runs.
