@@ -172,8 +172,8 @@ export function classifyPlan(changes: ResourceChange[], opts: ClassifyOptions = 
             type: 'destructive_stateful_nonprod',
             resource: { address: rc.address, type: rc.type },
             action,
-            reason: `stateful resource in a declared non-production environment (tagged ${npTag}); ${action} still causes data loss`,
-            summary: `${verb} a stateful resource in a declared non-production environment (data loss)`,
+            reason: `stateful resource in a declared non-production environment (tagged ${npTag}); ${action} may cause data loss, and recovery depends on backups, snapshots, replication, retention, or versioning that Prodgate cannot verify from this plan`,
+            summary: `${verb} a stateful resource in a declared non-production environment (data-loss risk)`,
             agentAuthored: agent.likelyAgent,
           })
         } else if (npTag && (prodSignal || protectionOn)) {
@@ -185,8 +185,8 @@ export function classifyPlan(changes: ResourceChange[], opts: ClassifyOptions = 
             type: 'destructive_stateful',
             resource: { address: rc.address, type: rc.type },
             action,
-            reason: `conflicting environment signals (declared non-production ${npTag} but ${conflict}); failing closed. ${action} may cause permanent data loss`,
-            summary: `${verb} a stateful resource (conflicting signals, data loss)`,
+            reason: `conflicting environment signals (declared non-production ${npTag} but ${conflict}); failing closed because this destructive change may affect production data`,
+            summary: `${verb} a stateful resource (conflicting signals, data-loss risk)`,
             agentAuthored: agent.likelyAgent,
           })
         } else {
@@ -196,7 +196,7 @@ export function classifyPlan(changes: ResourceChange[], opts: ClassifyOptions = 
             resource: { address: rc.address, type: rc.type },
             action,
             reason: statefulRationale(rc),
-            summary: `${verb} a stateful resource (data loss)`,
+            summary: `${verb} a stateful resource (data-loss risk)`,
             agentAuthored: agent.likelyAgent,
           })
         }

@@ -306,6 +306,25 @@ console.log('─'.repeat(50))
   check('s3 pab unchanged and known: no finding', r.findings.length === 0)
 }
 
+// S3 public access block on create: an unknown protection means the all-disabled
+// state cannot be ruled out.
+{
+  const r = classifyPlan(plan1('aws_s3_bucket_public_access_block', 'b', { actions: ['create'], before: null, after: { block_public_acls: null, ignore_public_acls: false, block_public_policy: false, restrict_public_buckets: false }, after_unknown: { block_public_acls: true } }))
+  check('s3 create three-false one-unknown: needs review', hasUnknownWarning(r) && r.stats.criticalCount === 0)
+}
+{
+  const r = classifyPlan(plan1('aws_s3_bucket_public_access_block', 'b', { actions: ['create'], before: null, after: { block_public_acls: null, ignore_public_acls: null, block_public_policy: null, restrict_public_buckets: null }, after_unknown: { block_public_acls: true, ignore_public_acls: true, block_public_policy: true, restrict_public_buckets: true } }))
+  check('s3 create all-unknown: needs review', hasUnknownWarning(r) && r.stats.criticalCount === 0)
+}
+{
+  const r = classifyPlan(plan1('aws_s3_bucket_public_access_block', 'b', { actions: ['create'], before: null, after: { block_public_acls: true, ignore_public_acls: null, block_public_policy: null, restrict_public_buckets: null }, after_unknown: { ignore_public_acls: true, block_public_policy: true, restrict_public_buckets: true } }))
+  check('s3 create one-known-true rest-unknown: no finding', r.findings.length === 0)
+}
+{
+  const r = classifyPlan(plan1('aws_s3_bucket_public_access_block', 'b', { actions: ['create'], before: null, after: { block_public_acls: false, ignore_public_acls: false, block_public_policy: false, restrict_public_buckets: false } }))
+  check('s3 create all-false: critical', r.findings.some(f => f.severity === 'CRITICAL'))
+}
+
 // security group ingress
 {
   const r = classifyPlan(plan1('aws_security_group', 'sg', { actions: ['update'], before: { ingress: [{ from_port: 443, to_port: 443, protocol: 'tcp', cidr_blocks: ['10.0.0.0/8'] }] }, after: { ingress: null }, after_unknown: { ingress: true } }))
@@ -383,6 +402,13 @@ throwsCode('impossible action combo rejected', () => parsePlan('{"format_version
   check('allowDestruction: destroy suppressed, no finding', r.verdict === 'pass' && r.findings.length === 0 && r.suppressions.length === 1 && r.suppressions[0].matchedBy === 'aws_db_instance.main')
 }
 
+// Without an exception, a public database replacement produces both findings: the
+// destruction of the existing data and the dangerous public recreate.
+{
+  const r = classifyPlan(fixture('allow-destroy-public-replace.json'))
+  check('public db replacement: both destruction and exposure are critical', r.verdict === 'fail' && r.findings.some(f => f.type === 'destructive_stateful' && f.severity === 'CRITICAL') && r.findings.some(f => f.type === 'dangerous_mutation' && f.severity === 'CRITICAL'))
+}
+
 // An allowed replace that comes back publicly accessible still fails on exposure:
 // the exception permits the destroy, not a dangerous recreate.
 {
@@ -404,6 +430,13 @@ throwsCode('impossible action combo rejected', () => parsePlan('{"format_version
 {
   const r = classifyPlan(fixture('aurora-instance-delete.json'))
   check('aurora-instance-delete: not stateful data loss', r.stats.criticalCount === 0 && r.findings.every(f => f.type !== 'destructive_stateful'))
+}
+
+// A global cluster owns replication topology, not the member storage. Deleting it is
+// an availability concern, not stateful data loss.
+{
+  const r = classifyPlan(fixture('delete-global-cluster.json'))
+  check('delete-global-cluster: availability, not data loss', r.findings.every(f => f.type !== 'destructive_stateful') && r.disruptions.some(d => d.type === 'aws_rds_global_cluster'))
 }
 
 // ── before/after tag semantics ─────────────────────────────────────────────

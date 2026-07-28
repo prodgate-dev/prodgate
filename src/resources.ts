@@ -27,7 +27,6 @@ export type StatefulInfo = { category: string; defaultSeverity: 'CRITICAL'; rati
 export const STATEFUL_RESOURCES: Record<string, StatefulInfo> = {
   aws_db_instance: { category: 'database', defaultSeverity: 'CRITICAL', rationale: 'the instance holds the database storage' },
   aws_rds_cluster: { category: 'database', defaultSeverity: 'CRITICAL', rationale: 'the cluster owns the storage volume for the database' },
-  aws_rds_global_cluster: { category: 'database', defaultSeverity: 'CRITICAL', rationale: 'the global cluster spans the regional database storage' },
   aws_docdb_cluster: { category: 'database', defaultSeverity: 'CRITICAL', rationale: 'the cluster holds the document storage' },
   aws_neptune_cluster: { category: 'database', defaultSeverity: 'CRITICAL', rationale: 'the cluster holds the graph storage' },
   aws_redshift_cluster: { category: 'database', defaultSeverity: 'CRITICAL', rationale: 'the cluster holds the warehouse storage' },
@@ -63,6 +62,9 @@ export const DISRUPTIVE_REPLACE: Record<string, DisruptiveInfo> = {
   // here rather than in the stateful table.
   aws_rds_cluster_instance: { category: 'database-compute' },
   aws_docdb_cluster_instance: { category: 'database-compute' },
+  // Deleting the global cluster changes replication and failover topology; it does
+  // not itself destroy the member clusters' storage (members are detached first).
+  aws_rds_global_cluster: { category: 'database-topology' },
   aws_instance: { category: 'compute' },
   aws_lb: { category: 'load-balancer' },
   aws_alb: { category: 'load-balancer' },
@@ -230,11 +232,17 @@ export const DANGEROUS_MUTATIONS: DangerousRule[] = [
         return null
       }
       if (!a) return null
-      // create: only flag an unambiguously wide-open block (every protection off),
-      // so a partially-public static-site bucket does not cry wolf.
-      return keys.every(k => a[k] === false)
-        ? { severity: 'CRITICAL', summary: 'creates an S3 public access block with no protections', attribute: 'public access block' }
-        : null
+      // create: flag an unambiguously wide-open block (every protection off), so a
+      // partially-public static-site bucket does not cry wolf.
+      if (keys.every(k => a[k] === false)) {
+        return { severity: 'CRITICAL', summary: 'creates an S3 public access block with no protections', attribute: 'public access block' }
+      }
+      // if no protection is known on and at least one is unknown, we cannot rule out
+      // that every protection ends up disabled.
+      if (!keys.some(k => a[k] === true) && anyUnknown(au, keys)) {
+        return indeterminate('public access block', 'S3 public access block')
+      }
+      return null
     },
   },
   {

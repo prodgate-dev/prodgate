@@ -33,6 +33,14 @@ function writeTmp(content: string): string {
   fs.writeFileSync(p, content)
   return p
 }
+function writeTmpBuffer(buf: Buffer): string {
+  const p = path.join(os.tmpdir(), `pg-cli-${process.pid}-${counter++}.json`)
+  fs.writeFileSync(p, buf)
+  return p
+}
+function digestOf(args: string[]): string {
+  try { return JSON.parse(run(['check', fixture('create-only.json'), '--json', ...args]).stdout).policyDigest } catch { return '' }
+}
 
 console.log('\nProdgate CLI behavior')
 console.log('─'.repeat(50))
@@ -83,6 +91,49 @@ check('audit json reports wouldBlock without failing', (() => {
     return r.code === 0 && o.policyVerdict === 'fail' && o.wouldBlock === true && o.verdict === 'pass'
   } catch { return false }
 })())
+
+// UTF-16 encoded plans (Windows tooling) must evaluate the same as UTF-8.
+{
+  const utf8 = fs.readFileSync(fixture('delete-db.json'), 'utf8')
+  const le = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(utf8, 'utf16le')])
+  const beInner = Buffer.from(utf8, 'utf16le')
+  const be = Buffer.from(beInner)
+  for (let i = 0; i + 1 < be.length; i += 2) { const t = be[i]; be[i] = be[i + 1]; be[i + 1] = t }
+  const beBuf = Buffer.concat([Buffer.from([0xfe, 0xff]), be])
+  check('utf16-le plan evaluates like utf8', run(['check', writeTmpBuffer(le)]).code === 1)
+  check('utf16-be plan evaluates like utf8', run(['check', writeTmpBuffer(beBuf)]).code === 1)
+}
+
+// Config path and exception reporting.
+{
+  const cfg = writeTmp('{"schemaVersion":1,"ignore":["module.x.*"]}')
+  const jr = run(['check', fixture('create-only.json'), '--config', cfg, '--json'])
+  let jsonHasPath = false
+  try { jsonHasPath = JSON.parse(jr.stdout).configPath === cfg } catch { jsonHasPath = false }
+  check('json contains configPath', jsonHasPath)
+  check('human prints the config path', run(['check', fixture('create-only.json'), '--config', cfg]).stdout.includes(cfg))
+}
+{
+  const cfg = writeTmp('{"allowDestruction":["aws_db_instance.main"]}')
+  const hr = run(['check', fixture('delete-db.json'), '--config', cfg])
+  check('human names the matched exception', /aws_db_instance\.main/.test(hr.stdout) && /exception/i.test(hr.stdout))
+  const jr = run(['check', fixture('delete-db.json'), '--config', cfg, '--json'])
+  let suppOk = false
+  try {
+    const s = JSON.parse(jr.stdout).suppressions[0]
+    suppOk = s.address === 'aws_db_instance.main' && s.matchedBy === 'aws_db_instance.main'
+  } catch { suppOk = false }
+  check('json contains suppression address and matchedBy', suppOk)
+}
+
+// Policy digest is deterministic and changes with the effective policy.
+{
+  check('same effective policy gives the same digest', digestOf([]) !== '' && digestOf([]) === digestOf([]))
+  check('changing mode changes the digest', digestOf([]) !== digestOf(['--mode', 'audit']))
+  check('changing fail-on changes the digest', digestOf([]) !== digestOf(['--fail-on', 'warning']))
+  const cfg = writeTmp('{"ignore":["a.*"]}')
+  check('changing an exception changes the digest', digestOf([]) !== digestOf(['--config', cfg]))
+}
 
 console.log('\n' + '─'.repeat(50))
 if (failures === 0) {

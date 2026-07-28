@@ -1,0 +1,17 @@
+{
+  "format_version": "1.2",
+  "resource_changes": [
+    {
+      "address": "aws_rds_global_cluster.g",
+      "mode": "managed",
+      "type": "aws_rds_global_cluster",
+      "name": "g",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["delete"],
+        "before": { "global_cluster_identifier": "app-global" },
+        "after": null
+      }
+    }
+  ]
+}
