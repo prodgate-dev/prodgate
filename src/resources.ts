@@ -76,7 +76,21 @@ export const DISRUPTIVE_REPLACE: Record<string, DisruptiveInfo> = {
   aws_cloudfront_distribution: { category: 'cdn' },
 }
 
-export type MutationMatch = { severity: Severity; summary: string; attribute: string }
+export type RiskCategory = 'data_loss' | 'recoverability' | 'availability' | 'exposure' | 'privilege' | 'unknown'
+export type Confidence = 'high' | 'medium' | 'low'
+// A plan fact that produced a finding. Fields and short observed tokens only, never
+// raw or sensitive attribute values.
+export type Evidence = { field: string; observed: string }
+
+export type MutationMatch = {
+  ruleId?: string
+  severity: Severity
+  category: RiskCategory
+  confidence: Confidence
+  summary: string
+  attribute: string
+  evidence: Evidence[]
+}
 
 export type DangerousRule = {
   id: string
@@ -179,8 +193,11 @@ function ingressCidrUnknown(afterUnknown: any): boolean {
 function indeterminate(attribute: string, what: string): MutationMatch {
   return {
     severity: 'WARNING',
+    category: 'unknown',
+    confidence: 'low',
     summary: `resulting ${what} is unknown at plan time; cannot confirm it is safe (needs review)`,
     attribute,
+    evidence: [{ field: attribute, observed: 'unknown' }],
   }
 }
 
@@ -188,20 +205,20 @@ function indeterminate(attribute: string, what: string): MutationMatch {
 
 export const DANGEROUS_MUTATIONS: DangerousRule[] = [
   {
-    id: 'deletion-protection-disabled',
+    id: 'PG-AWS-DELETION-PROTECTION',
     appliesTo: () => true,
     evaluate: (b, a, au) => {
       if (!b) return null
       const wasOn = b.deletion_protection === true || b.deletion_protection_enabled === true
       if (!wasOn) return null
       const nowOff = !!a && (a.deletion_protection === false || a.deletion_protection_enabled === false)
-      if (nowOff) return { severity: 'CRITICAL', summary: 'disables deletion protection', attribute: 'deletion_protection' }
+      if (nowOff) return { severity: 'CRITICAL', category: 'recoverability', confidence: 'high', summary: 'disables deletion protection', attribute: 'deletion_protection', evidence: [{ field: 'before.deletion_protection', observed: 'true' }, { field: 'after.deletion_protection', observed: 'false' }] }
       if (anyUnknown(au, ['deletion_protection', 'deletion_protection_enabled'])) return indeterminate('deletion_protection', 'deletion protection')
       return null
     },
   },
   {
-    id: 'database-made-public',
+    id: 'PG-AWS-RDS-PUBLIC',
     appliesTo: (t) => t === 'aws_db_instance' || t === 'aws_rds_cluster' || t === 'aws_rds_cluster_instance',
     // Dangerous whenever the resulting state is public and it was not already:
     // fires on an update (false -> true) and on a create (no prior state). When the
@@ -209,7 +226,7 @@ export const DANGEROUS_MUTATIONS: DangerousRule[] = [
     // database stays private, so flag it for review rather than assume it is safe.
     evaluate: (b, a, au) => {
       if (a && a.publicly_accessible === true && b?.publicly_accessible !== true) {
-        return { severity: 'CRITICAL', summary: 'makes a database publicly accessible', attribute: 'publicly_accessible' }
+        return { severity: 'CRITICAL', category: 'exposure', confidence: 'high', summary: 'makes a database publicly accessible', attribute: 'publicly_accessible', evidence: [{ field: 'after.publicly_accessible', observed: 'true' }] }
       }
       if (anyUnknown(au, ['publicly_accessible']) && b?.publicly_accessible !== true) {
         return indeterminate('publicly_accessible', 'database public access')
@@ -218,14 +235,14 @@ export const DANGEROUS_MUTATIONS: DangerousRule[] = [
     },
   },
   {
-    id: 's3-public-access-block-weakened',
+    id: 'PG-AWS-S3-PUBLIC-ACCESS',
     appliesTo: (t) => t === 'aws_s3_bucket_public_access_block',
     evaluate: (b, a, au) => {
       const keys = ['block_public_acls', 'ignore_public_acls', 'block_public_policy', 'restrict_public_buckets']
       if (b) {
         // update: any protection flipped from on to off
         if (a && keys.some(k => b[k] === true && a[k] === false)) {
-          return { severity: 'CRITICAL', summary: 'weakens the S3 public access block', attribute: 'public access block' }
+          return { severity: 'CRITICAL', category: 'exposure', confidence: 'high', summary: 'weakens the S3 public access block', attribute: 'public access block', evidence: [{ field: 'after.block_public_*', observed: 'false' }] }
         }
         // a protection that was on becomes unknown: cannot confirm it stays on
         if (anyUnknown(au, keys.filter(k => b[k] === true))) return indeterminate('public access block', 'S3 public access block')
@@ -235,7 +252,7 @@ export const DANGEROUS_MUTATIONS: DangerousRule[] = [
       // create: flag an unambiguously wide-open block (every protection off), so a
       // partially-public static-site bucket does not cry wolf.
       if (keys.every(k => a[k] === false)) {
-        return { severity: 'CRITICAL', summary: 'creates an S3 public access block with no protections', attribute: 'public access block' }
+        return { severity: 'CRITICAL', category: 'exposure', confidence: 'high', summary: 'creates an S3 public access block with no protections', attribute: 'public access block', evidence: [{ field: 'after.block_public_*', observed: 'false' }] }
       }
       // if no protection is known on and at least one is unknown, we cannot rule out
       // that every protection ends up disabled.
@@ -246,7 +263,7 @@ export const DANGEROUS_MUTATIONS: DangerousRule[] = [
     },
   },
   {
-    id: 'security-group-opened-to-world',
+    id: 'PG-AWS-SG-WORLD-OPEN',
     appliesTo: (t) =>
       t === 'aws_security_group' || t === 'aws_security_group_rule' || t === 'aws_vpc_security_group_ingress_rule',
     evaluate: (b, a, au) => {
@@ -258,8 +275,11 @@ export const DANGEROUS_MUTATIONS: DangerousRule[] = [
           const sensitive = newly.some(coversSensitive)
           return {
             severity: sensitive ? 'CRITICAL' : 'WARNING',
+            category: 'exposure',
+            confidence: sensitive ? 'high' : 'medium',
             summary: sensitive ? 'opens a sensitive port to 0.0.0.0/0' : 'opens a security group to 0.0.0.0/0',
             attribute: 'ingress',
+            evidence: [{ field: 'ingress.cidr', observed: sensitive ? '0.0.0.0/0 to a sensitive port' : '0.0.0.0/0' }],
           }
         }
       }
@@ -272,7 +292,7 @@ export const DANGEROUS_MUTATIONS: DangerousRule[] = [
     },
   },
   {
-    id: 'iam-wildcard-added',
+    id: 'PG-AWS-IAM-WILDCARD',
     appliesTo: (t) =>
       t === 'aws_iam_policy' ||
       t === 'aws_iam_role_policy' ||
@@ -280,7 +300,7 @@ export const DANGEROUS_MUTATIONS: DangerousRule[] = [
       t === 'aws_iam_group_policy',
     evaluate: (b, a, au) => {
       if (iamHasWildcard(a?.policy) && !iamHasWildcard(b?.policy)) {
-        return { severity: 'WARNING', summary: 'grants a wildcard (*) IAM action or resource', attribute: 'policy' }
+        return { severity: 'WARNING', category: 'privilege', confidence: 'medium', summary: 'grants a wildcard (*) IAM action or resource', attribute: 'policy', evidence: [{ field: 'after.policy', observed: 'wildcard action or resource' }] }
       }
       if (anyUnknown(au, ['policy']) && !iamHasWildcard(b?.policy)) return indeterminate('policy', 'IAM policy')
       return null

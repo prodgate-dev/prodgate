@@ -15,7 +15,7 @@
  */
 
 import { ResourceChange } from './plan'
-import { Severity } from './resources'
+import { Severity, RiskCategory, Confidence, Evidence } from './resources'
 import { AgentInfo } from './agent'
 import { isStateful, statefulRationale, isProductionTags, nonProductionTagFrom, isDisruptiveReplace, matchDangerousMutations } from './policy'
 
@@ -27,12 +27,16 @@ export type FindingType =
   | 'dangerous_mutation'
 
 export type PlanFinding = {
+  ruleId: string
   severity: Severity
+  category: RiskCategory
+  confidence: Confidence
   type: FindingType
   resource: { address: string; type: string }
   action: 'delete' | 'replace' | 'update' | 'create'
   reason: string
   summary: string
+  evidence: Evidence[]
   agentAuthored: boolean
   detail?: { attribute?: string }
 }
@@ -156,6 +160,7 @@ export function classifyPlan(changes: ResourceChange[], opts: ClassifyOptions = 
     if (destructive && !destroyAllowed) {
       const action: 'delete' | 'replace' = rc.changeKind === 'delete' ? 'delete' : 'replace'
       const verb = action === 'delete' ? 'deletes' : 'replaces'
+      const destroyEvidence: Evidence[] = [{ field: 'change.actions', observed: rc.actions.join('+') }]
 
       if (isStateful(rc)) {
         // Judge the destroyed object from its own (before) tags. Downgrade to WARNING
@@ -168,12 +173,16 @@ export function classifyPlan(changes: ResourceChange[], opts: ClassifyOptions = 
         const prodSignal = isProductionTags(rc.beforeTags, rc.address)
         if (npTag && !prodSignal && !protectionOn) {
           findings.push({
+            ruleId: 'PG-DESTROY-STATEFUL-NONPROD',
             severity: 'WARNING',
+            category: 'data_loss',
+            confidence: 'medium',
             type: 'destructive_stateful_nonprod',
             resource: { address: rc.address, type: rc.type },
             action,
             reason: `stateful resource in a declared non-production environment (tagged ${npTag}); ${action} may cause data loss, and recovery depends on backups, snapshots, replication, retention, or versioning that Prodgate cannot verify from this plan`,
             summary: `${verb} a stateful resource in a declared non-production environment (data-loss risk)`,
+            evidence: [...destroyEvidence, { field: 'beforeTags.Environment', observed: npTag }],
             agentAuthored: agent.likelyAgent,
           })
         } else if (npTag && (prodSignal || protectionOn)) {
@@ -181,43 +190,59 @@ export function classifyPlan(changes: ResourceChange[], opts: ClassifyOptions = 
           // production-looking address or deletion protection. Fail closed and say why.
           const conflict = prodSignal ? 'the address looks production' : 'deletion protection is enabled'
           findings.push({
+            ruleId: 'PG-DESTROY-STATEFUL',
             severity: 'CRITICAL',
+            category: 'data_loss',
+            confidence: 'high',
             type: 'destructive_stateful',
             resource: { address: rc.address, type: rc.type },
             action,
             reason: `conflicting environment signals (declared non-production ${npTag} but ${conflict}); failing closed because this destructive change may affect production data`,
             summary: `${verb} a stateful resource (conflicting signals, data-loss risk)`,
+            evidence: [...destroyEvidence, { field: 'beforeTags.Environment', observed: npTag }],
             agentAuthored: agent.likelyAgent,
           })
         } else {
           findings.push({
+            ruleId: 'PG-DESTROY-STATEFUL',
             severity: 'CRITICAL',
+            category: 'data_loss',
+            confidence: 'high',
             type: 'destructive_stateful',
             resource: { address: rc.address, type: rc.type },
             action,
             reason: statefulRationale(rc),
             summary: `${verb} a stateful resource (data-loss risk)`,
+            evidence: destroyEvidence,
             agentAuthored: agent.likelyAgent,
           })
         }
       } else if (isProductionTags(rc.beforeTags, rc.address)) {
         findings.push({
+          ruleId: 'PG-DESTROY-PROD',
           severity: 'CRITICAL',
+          category: 'availability',
+          confidence: 'medium',
           type: 'destructive_production',
           resource: { address: rc.address, type: rc.type },
           action,
           reason: 'production-tagged resource',
           summary: `${verb} a production resource`,
+          evidence: destroyEvidence,
           agentAuthored: agent.likelyAgent,
         })
       } else {
         findings.push({
+          ruleId: 'PG-DESTROY-OTHER',
           severity: 'WARNING',
+          category: 'availability',
+          confidence: 'low',
           type: 'destructive_other',
           resource: { address: rc.address, type: rc.type },
           action,
           reason: 'resource is destroyed',
           summary: `${verb} a resource`,
+          evidence: destroyEvidence,
           agentAuthored: agent.likelyAgent,
         })
       }
@@ -230,12 +255,16 @@ export function classifyPlan(changes: ResourceChange[], opts: ClassifyOptions = 
       const action: 'create' | 'update' | 'replace' = rc.changeKind
       for (const m of matchDangerousMutations(rc)) {
         findings.push({
+          ruleId: m.ruleId ?? 'PG-MUTATION',
           severity: m.severity,
+          category: m.category,
+          confidence: m.confidence,
           type: 'dangerous_mutation',
           resource: { address: rc.address, type: rc.type },
           action,
           reason: m.summary,
           summary: m.summary,
+          evidence: m.evidence,
           agentAuthored: agent.likelyAgent,
           detail: { attribute: m.attribute },
         })

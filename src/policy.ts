@@ -60,7 +60,7 @@ export function matchDangerousMutations(rc: ResourceChange): MutationMatch[] {
   for (const rule of DANGEROUS_MUTATIONS) {
     if (!rule.appliesTo(rc.type)) continue
     const m = rule.evaluate(rc.before, rc.after, rc.afterUnknown)
-    if (m) out.push(m)
+    if (m) out.push({ ...m, ruleId: rule.id })
   }
   return out
 }

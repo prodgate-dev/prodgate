@@ -253,6 +253,22 @@ console.log('─'.repeat(50))
   check('agent: dependabot[bot] not an AI agent', detectAgent({ author: 'dependabot[bot]' }).likelyAgent === false)
 }
 
+// ── finding model (rule ids, category, confidence, evidence) ────────────────
+
+{
+  const f = classifyPlan(fixture('delete-db.json')).findings[0]
+  check('stateful finding carries id/category/confidence/evidence', f.ruleId === 'PG-DESTROY-STATEFUL' && f.category === 'data_loss' && f.confidence === 'high' && f.evidence.some(e => e.field === 'change.actions'))
+}
+{
+  const f = classifyPlan(fixture('public-db.json')).findings.find(x => x.type === 'dangerous_mutation')
+  check('mutation finding carries rule id and exposure category', !!f && f.ruleId === 'PG-AWS-RDS-PUBLIC' && f.category === 'exposure' && f.evidence.length > 0)
+}
+{
+  const r = classifyPlan(fixture('large-mixed-plan.json'))
+  const ok = r.findings.length > 0 && r.findings.every(f => typeof f.ruleId === 'string' && f.ruleId.length > 0 && typeof f.category === 'string' && typeof f.confidence === 'string' && Array.isArray(f.evidence))
+  check('every finding has id/category/confidence/evidence', ok)
+}
+
 // ── enforcement mode and failOn ────────────────────────────────────────────
 
 {

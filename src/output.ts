@@ -226,5 +226,5 @@ export function formatGithub(result: PlanResult): string {
 // A scannable per-finding block: action + resource on the lead line, the reason
 // indented beneath it.
 function githubFinding(f: PlanFinding): string[] {
-  return [`- **${f.action.toUpperCase()}** \`${f.resource.address}\``, `  Why: ${f.reason}`]
+  return [`- **${f.action.toUpperCase()}** \`${f.resource.address}\` (${f.ruleId})`, `  Why: ${f.reason}`]
 }

@@ -84,6 +84,14 @@ check('github output is markdown with no ANSI', (() => {
   const r = run(['check', fixture('delete-db.json'), '--github'])
   return /## Prodgate/.test(r.stdout) && !/\x1b\[/.test(r.stdout)
 })())
+check('github output shows the rule id', run(['check', fixture('delete-db.json'), '--github']).stdout.includes('PG-DESTROY-STATEFUL'))
+check('json findings carry rule id, category, confidence, evidence', (() => {
+  const r = run(['check', fixture('delete-db.json'), '--json'])
+  try {
+    const f = JSON.parse(r.stdout).findings[0]
+    return f.ruleId === 'PG-DESTROY-STATEFUL' && f.category === 'data_loss' && f.confidence === 'high' && Array.isArray(f.evidence) && f.evidence.length > 0
+  } catch { return false }
+})())
 check('audit json reports wouldBlock without failing', (() => {
   const r = run(['check', fixture('delete-db.json'), '--mode', 'audit', '--json'])
   try {
