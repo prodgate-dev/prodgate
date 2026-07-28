@@ -59,7 +59,12 @@ program
       planHash = 'sha256:' + crypto.createHash('sha256').update(normalized).digest('hex')
       changes = parsePlan(text)
     } catch (e) {
-      console.error((e as Error).message)
+      const err = e as { code?: string; message: string; path?: string }
+      if (options.json) {
+        console.log(JSON.stringify({ error: { code: err.code ?? 'INVALID_INPUT', message: err.message, path: err.path } }, null, 2))
+      } else {
+        console.error(err.message)
+      }
       process.exit(2)
     }
 
@@ -126,12 +131,43 @@ function readMaybe(p?: string): string | undefined {
   }
 }
 
+function configError(message: string): never {
+  console.error('Invalid prodgate config: ' + message)
+  process.exit(2)
+}
+
+function isNonEmptyStringArray(v: any): boolean {
+  return Array.isArray(v) && v.every(x => typeof x === 'string' && x.trim().length > 0)
+}
+
+// Config is validated rather than silently ignored: a malformed config file almost
+// always means the user meant to change behavior, so failing closed is safer than
+// quietly running the defaults.
 function loadConfig(p?: string): Config | undefined {
+  const explicit = !!p
   const target = p ?? 'prodgate.config.json'
-  try {
-    if (fs.existsSync(target)) return JSON.parse(fs.readFileSync(target, 'utf8'))
-  } catch {
-    /* ignore malformed config; zero-config is the default */
+  if (!fs.existsSync(target)) {
+    if (explicit) configError(`config file not found: ${target}`)
+    return undefined
   }
-  return undefined
+  let raw: any
+  try {
+    let text = fs.readFileSync(target, 'utf8')
+    if (text.charCodeAt(0) === 0xfeff) text = text.slice(1)
+    raw = JSON.parse(text)
+  } catch (e) {
+    configError(`${target} is not valid JSON: ${(e as Error).message}`)
+  }
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) configError(`${target}: root must be an object`)
+  const supportedKeys = new Set(['schemaVersion', 'mode', 'failOn', 'ignore', 'allowDestruction', 'allowDestroy'])
+  for (const k of Object.keys(raw)) {
+    if (!supportedKeys.has(k)) configError(`${target}: unknown key "${k}"`)
+  }
+  if (raw.schemaVersion !== undefined && raw.schemaVersion !== 1) configError(`${target}: unsupported schemaVersion (expected 1)`)
+  if (raw.mode !== undefined && raw.mode !== 'audit' && raw.mode !== 'enforce') configError(`${target}: mode must be "audit" or "enforce"`)
+  if (raw.failOn !== undefined && !['critical', 'warning', 'never'].includes(raw.failOn)) configError(`${target}: failOn must be "critical", "warning", or "never"`)
+  for (const key of ['ignore', 'allowDestruction', 'allowDestroy']) {
+    if (raw[key] !== undefined && !isNonEmptyStringArray(raw[key])) configError(`${target}: ${key} must be an array of non-empty strings`)
+  }
+  return raw as Config
 }

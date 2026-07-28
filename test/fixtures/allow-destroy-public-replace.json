@@ -1,0 +1,17 @@
+{
+  "format_version": "1.2",
+  "resource_changes": [
+    {
+      "address": "aws_db_instance.scratch",
+      "mode": "managed",
+      "type": "aws_db_instance",
+      "name": "scratch",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["delete", "create"],
+        "before": { "identifier": "scratch-db", "publicly_accessible": false, "tags": { "Environment": "prod" } },
+        "after": { "identifier": "scratch-db", "publicly_accessible": true, "tags": { "Environment": "prod" } }
+      }
+    }
+  ]
+}

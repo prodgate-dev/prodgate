@@ -47,6 +47,14 @@ function disruptionNote(result: PlanResult): string | null {
   return `Replacing these resources will briefly interrupt service while they are recreated: ${shown.join(', ')}${suffix}.`
 }
 
+// Plain lines noting destructions that a configured exception allowed through.
+function suppressionNotes(result: PlanResult): string[] {
+  return result.suppressions.map(s =>
+    s.matchedBy
+      ? `Destruction of \`${s.address}\` allowed by exception \`${s.matchedBy}\`.`
+      : `Destruction of \`${s.address}\` allowed by an exception.`)
+}
+
 function actionVerb(f: PlanFinding): string {
   return f.action.toUpperCase()
 }
@@ -86,13 +94,20 @@ export function formatHuman(result: PlanResult, opts: { color?: boolean } = {}):
 
   if (result.findings.length === 0) {
     lines.push('')
-    lines.push('No destructive or dangerous changes detected.')
+    lines.push(result.stats.resourcesScanned === 0
+      ? 'Valid plan: no managed resource changes.'
+      : 'No destructive or dangerous changes detected.')
   }
 
   const humanDisruption = disruptionNote(result)
   if (humanDisruption) {
     lines.push('')
     lines.push(humanDisruption)
+  }
+
+  for (const note of suppressionNotes(result)) {
+    lines.push('')
+    lines.push(note)
   }
 
   if (result.agent.likelyAgent) {
@@ -144,13 +159,20 @@ export function formatGithub(result: PlanResult): string {
 
   if (result.findings.length === 0) {
     lines.push('')
-    lines.push('No destructive or dangerous changes detected.')
+    lines.push(result.stats.resourcesScanned === 0
+      ? 'Valid plan: no managed resource changes.'
+      : 'No destructive or dangerous changes detected.')
   }
 
   const githubDisruption = disruptionNote(result)
   if (githubDisruption) {
     lines.push('')
     lines.push(githubDisruption)
+  }
+
+  for (const note of suppressionNotes(result)) {
+    lines.push('')
+    lines.push(note)
   }
 
   if (result.approved && result.findings.length > 0) {

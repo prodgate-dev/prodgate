@@ -21,6 +21,14 @@ function check(label: string, cond: boolean) {
   console.log(`  ${cond ? '[PASS]' : '[FAIL]'} ${label}`)
   if (!cond) failures++
 }
+function throwsCode(label: string, fn: () => unknown, code: string) {
+  try {
+    fn()
+    check(label + ' (did not throw)', false)
+  } catch (e: any) {
+    check(label, !!e && e.code === code)
+  }
+}
 
 console.log('\nProdgate plan classification')
 console.log('─'.repeat(50))
@@ -236,6 +244,62 @@ console.log('─'.repeat(50))
   check('agent: PR-body generated marker flagged', detectAgent({ prBody: '🤖 Generated with Claude Code' }).likelyAgent === true)
   check('agent: renovate[bot] not an AI agent', detectAgent({ author: 'renovate[bot]' }).likelyAgent === false)
   check('agent: dependabot[bot] not an AI agent', detectAgent({ author: 'dependabot[bot]' }).likelyAgent === false)
+}
+
+// ── plan input validation (fail closed) ────────────────────────────────────
+
+throwsCode('empty object rejected', () => parsePlan('{}'), 'UNRECOGNIZED_DOCUMENT')
+throwsCode('top-level array rejected', () => parsePlan('[]'), 'UNRECOGNIZED_DOCUMENT')
+throwsCode('state file rejected', () => parsePlan('{"format_version":"1.0","values":{"root_module":{}}}'), 'UNRECOGNIZED_DOCUMENT')
+throwsCode('truncated json rejected', () => parsePlan('{"resource_changes":['), 'INVALID_JSON')
+throwsCode('resource_changes wrong type rejected', () => parsePlan('{"resource_changes":"wrong"}'), 'INVALID_RESOURCE_CHANGE')
+throwsCode('missing actions rejected', () => parsePlan('{"resource_changes":[{"address":"a.b","type":"a","name":"b","change":{}}]}'), 'INVALID_RESOURCE_CHANGE')
+throwsCode('unknown action rejected', () => parsePlan('{"resource_changes":[{"address":"a.b","type":"a","name":"b","change":{"actions":["frobnicate"]}}]}'), 'UNSUPPORTED_ACTION')
+
+// A valid plan with an empty resource_changes array is a real no-change plan.
+{
+  const r = classifyPlan(parsePlan('{"format_version":"1.2","resource_changes":[]}'))
+  check('valid no-change plan: pass, 0 scanned', r.verdict === 'pass' && r.stats.resourcesScanned === 0)
+}
+
+// ── allowDestruction scoping ───────────────────────────────────────────────
+
+// An allowed destroy suppresses the destruction finding and records the exception.
+{
+  const r = classifyPlan(fixture('delete-db.json'), { config: { allowDestruction: ['aws_db_instance.main'] } })
+  check('allowDestruction: destroy suppressed, no finding', r.verdict === 'pass' && r.findings.length === 0 && r.suppressions.length === 1 && r.suppressions[0].matchedBy === 'aws_db_instance.main')
+}
+
+// An allowed replace that comes back publicly accessible still fails on exposure:
+// the exception permits the destroy, not a dangerous recreate.
+{
+  const r = classifyPlan(fixture('allow-destroy-public-replace.json'), { config: { allowDestruction: ['aws_db_instance.scratch'] } })
+  check('allowDestruction: destruction allowed but exposure still critical', r.verdict === 'fail' && r.suppressions.length === 1 && r.findings.some(f => f.type === 'dangerous_mutation' && f.severity === 'CRITICAL') && r.findings.every(f => f.type !== 'destructive_stateful'))
+}
+
+// The deprecated allowDestroy alias still works.
+{
+  const r = classifyPlan(fixture('delete-db.json'), { config: { allowDestroy: ['aws_db_instance.main'] } })
+  check('allowDestroy alias: still suppresses destruction', r.verdict === 'pass' && r.suppressions.length === 1)
+}
+
+// ── resource semantics ─────────────────────────────────────────────────────
+
+// An Aurora cluster instance is compute, not storage. Deleting one is an
+// availability concern, not irreversible data loss, so it must not be flagged as
+// a stateful data-loss critical.
+{
+  const r = classifyPlan(fixture('aurora-instance-delete.json'))
+  check('aurora-instance-delete: not stateful data loss', r.stats.criticalCount === 0 && r.findings.every(f => f.type !== 'destructive_stateful'))
+}
+
+// ── before/after tag semantics ─────────────────────────────────────────────
+
+// A production database replaced by a dev-tagged object still destroys prod data.
+// The destroyed side is judged from before tags, so the re-tag cannot downgrade it.
+{
+  const r = classifyPlan(fixture('replace-retag-prod-to-dev.json'))
+  check('replace-retag-prod-to-dev: fail, destruction judged from before', r.verdict === 'fail' && r.stats.criticalCount === 1 && r.findings[0].type === 'destructive_stateful' && r.findings[0].action === 'replace')
 }
 
 // A leading BOM (Windows / PowerShell `terraform show -json >` output) must not

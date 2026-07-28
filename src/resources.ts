@@ -22,10 +22,8 @@ export type StatefulInfo = { category: string }
 export const STATEFUL_RESOURCES: Record<string, StatefulInfo> = {
   aws_db_instance: { category: 'database' },
   aws_rds_cluster: { category: 'database' },
-  aws_rds_cluster_instance: { category: 'database' },
   aws_rds_global_cluster: { category: 'database' },
   aws_docdb_cluster: { category: 'database' },
-  aws_docdb_cluster_instance: { category: 'database' },
   aws_neptune_cluster: { category: 'database' },
   aws_redshift_cluster: { category: 'database' },
   aws_elasticache_cluster: { category: 'cache' },
@@ -54,6 +52,12 @@ export type DisruptiveInfo = { category: string }
 // types are deliberately absent: their replace is already CRITICAL for data loss,
 // so a disruption note there would be redundant.
 export const DISRUPTIVE_REPLACE: Record<string, DisruptiveInfo> = {
+  // Aurora and DocumentDB separate storage from compute: a cluster instance is a
+  // compute member, and removing or replacing it affects availability or capacity
+  // while the cluster keeps the data. It is not a data-loss event, so it belongs
+  // here rather than in the stateful table.
+  aws_rds_cluster_instance: { category: 'database-compute' },
+  aws_docdb_cluster_instance: { category: 'database-compute' },
   aws_instance: { category: 'compute' },
   aws_lb: { category: 'load-balancer' },
   aws_alb: { category: 'load-balancer' },

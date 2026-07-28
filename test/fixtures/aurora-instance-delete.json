@@ -1,0 +1,17 @@
+{
+  "format_version": "1.2",
+  "resource_changes": [
+    {
+      "address": "aws_rds_cluster_instance.replica_1",
+      "mode": "managed",
+      "type": "aws_rds_cluster_instance",
+      "name": "replica_1",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["delete"],
+        "before": { "identifier": "app-replica-1", "cluster_identifier": "app-cluster" },
+        "after": null
+      }
+    }
+  ]
+}

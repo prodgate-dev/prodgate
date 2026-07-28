@@ -17,7 +17,7 @@
 import { ResourceChange } from './plan'
 import { Severity } from './resources'
 import { AgentInfo } from './agent'
-import { isStateful, isProduction, nonProductionTag, isDisruptiveReplace, matchDangerousMutations } from './policy'
+import { isStateful, isProductionTags, nonProductionTagFrom, isDisruptiveReplace, matchDangerousMutations } from './policy'
 
 export type FindingType =
   | 'destructive_stateful'
@@ -38,8 +38,12 @@ export type PlanFinding = {
 }
 
 export type Config = {
+  schemaVersion?: number
+  mode?: 'audit' | 'enforce'
+  failOn?: 'critical' | 'warning' | 'never'
   ignore?: string[] // resource addresses (glob with *) to skip entirely
-  allowDestroy?: string[] // addresses explicitly allowed to be destroyed
+  allowDestruction?: string[] // addresses allowed to be destroyed; suppresses only the destruction finding
+  allowDestroy?: string[] // deprecated alias for allowDestruction
 }
 
 export type ClassifyOptions = {
@@ -55,6 +59,9 @@ export type PlanResult = {
   // Resources whose replacement briefly interrupts service. Informational only:
   // these never produce a finding and never affect the verdict.
   disruptions: { address: string; type: string }[]
+  // Destructions that a configured allowDestruction exception suppressed. Recorded
+  // so the report can show what was allowed and by which pattern.
+  suppressions: { address: string; matchedBy?: string }[]
   verdict: 'pass' | 'fail'
   approved: boolean
   strict: boolean
@@ -89,11 +96,15 @@ function globMatch(value: string, pattern: string): boolean {
 function matchesAny(address: string, patterns?: string[]): boolean {
   return !!patterns && patterns.some(p => globMatch(address, p))
 }
+function firstMatch(address: string, patterns?: string[]): string | undefined {
+  return patterns?.find(p => globMatch(address, p))
+}
 
 export function classifyPlan(changes: ResourceChange[], opts: ClassifyOptions = {}): PlanResult {
   const agent = opts.agent ?? { likelyAgent: false, signals: [] }
   const findings: PlanFinding[] = []
   const disruptions: { address: string; type: string }[] = []
+  const suppressions: { address: string; matchedBy?: string }[] = []
   let created = 0
   let updated = 0
   let replaced = 0
@@ -115,19 +126,29 @@ export function classifyPlan(changes: ResourceChange[], opts: ClassifyOptions = 
 
     const destructive = rc.changeKind === 'delete' || rc.changeKind === 'replace'
 
-    if (destructive) {
-      // An explicitly allowed destroy skips every check for this resource.
-      if (matchesAny(rc.address, opts.config?.allowDestroy)) continue
+    // An allowDestruction exception suppresses only the destruction finding for this
+    // resource. It must not skip analysis of the resulting state, so a replace that
+    // is allowed to destroy is still checked for a dangerous recreate (for example a
+    // database that comes back publicly accessible).
+    const allowList = opts.config?.allowDestruction ?? opts.config?.allowDestroy
+    const destroyAllowed = destructive && matchesAny(rc.address, allowList)
+    if (destroyAllowed) {
+      suppressions.push({ address: rc.address, matchedBy: firstMatch(rc.address, allowList) })
+    }
+
+    if (destructive && !destroyAllowed) {
       const action: 'delete' | 'replace' = rc.changeKind === 'delete' ? 'delete' : 'replace'
       const verb = action === 'delete' ? 'deletes' : 'replaces'
 
       if (isStateful(rc)) {
-        // Downgrade to WARNING only on a team-declared non-production environment,
-        // and never when the resource itself is protected or looks like prod. Unknown
-        // (untagged) or conflicting signals fail closed at CRITICAL.
-        const npTag = nonProductionTag(rc)
+        // Judge the destroyed object from its own (before) tags. Downgrade to WARNING
+        // only on a team-declared non-production environment, and never when the
+        // resource is protected or looks like prod. Unknown (untagged) or conflicting
+        // signals fail closed at CRITICAL. Using beforeTags stops a replace that
+        // re-tags the new object as dev from hiding the destruction of prod data.
+        const npTag = nonProductionTagFrom(rc.beforeTags)
         const protectionOn = rc.before?.deletion_protection === true || rc.before?.deletion_protection_enabled === true
-        if (npTag && !isProduction(rc) && !protectionOn) {
+        if (npTag && !isProductionTags(rc.beforeTags, rc.address) && !protectionOn) {
           findings.push({
             severity: 'WARNING',
             type: 'destructive_stateful_nonprod',
@@ -143,12 +164,12 @@ export function classifyPlan(changes: ResourceChange[], opts: ClassifyOptions = 
             type: 'destructive_stateful',
             resource: { address: rc.address, type: rc.type },
             action,
-            reason: `stateful resource; ${action} causes irreversible data loss`,
+            reason: `stateful resource; ${action} may cause permanent data loss (recovery depends on backups, snapshots, or versioning)`,
             summary: `${verb} a stateful resource (data loss)`,
             agentAuthored: agent.likelyAgent,
           })
         }
-      } else if (isProduction(rc)) {
+      } else if (isProductionTags(rc.beforeTags, rc.address)) {
         findings.push({
           severity: 'CRITICAL',
           type: 'destructive_production',
@@ -204,6 +225,7 @@ export function classifyPlan(changes: ResourceChange[], opts: ClassifyOptions = 
   return {
     findings,
     disruptions,
+    suppressions,
     verdict,
     approved,
     strict,

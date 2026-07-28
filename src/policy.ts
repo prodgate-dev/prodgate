@@ -27,11 +27,13 @@ const PROD_NAME = /(^|[_\-./])prod(uction)?([_\-./0-9]|$)/i
 // non-production environments and must never be treated as prod.
 const NONPROD_NAME = /(^|[_\-./])(non|pre)[_\-.]?prod/i
 
-export function isProduction(rc: ResourceChange): boolean {
-  for (const [k, v] of Object.entries(rc.tags)) {
+// Judges a specific side's tags plus the resource address. The address is the same
+// for both sides of a replace, so it is passed in rather than read from one side.
+export function isProductionTags(tags: Record<string, string>, address: string): boolean {
+  for (const [k, v] of Object.entries(tags)) {
     if (PROD_TAG_KEYS.includes(k.toLowerCase()) && PROD_VALUE.test(v)) return true
   }
-  return PROD_NAME.test(rc.address) && !NONPROD_NAME.test(rc.address)
+  return PROD_NAME.test(address) && !NONPROD_NAME.test(address)
 }
 
 // An explicit, team-declared non-production environment. This is the OPPOSITE and
@@ -41,8 +43,8 @@ export function isProduction(rc: ResourceChange): boolean {
 // region-scoped env tag like "dev-eu-west-1" or "staging_2" still downgrades.
 const NONPROD_VALUE = /^(dev|develop|development|test|testing|qa|uat|preview|sandbox|sbx|ephemeral|staging|stage)([_.\-].*)?$/i
 
-export function nonProductionTag(rc: ResourceChange): string | null {
-  for (const [k, v] of Object.entries(rc.tags)) {
+export function nonProductionTagFrom(tags: Record<string, string>): string | null {
+  for (const [k, v] of Object.entries(tags)) {
     if (PROD_TAG_KEYS.includes(k.toLowerCase()) && NONPROD_VALUE.test(v.trim())) return `${k}=${v}`
   }
   return null
