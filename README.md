@@ -204,7 +204,7 @@ The Action exposes outputs so later steps can react without parsing the comment:
 | `would-block` | `true` if this would block in enforce mode |
 | `execution-outcome` | `allowed`, `blocked`, `reported`, or `overridden` |
 | `enforcement-mode` | `audit` or `enforce` |
-| `exit-code` | `0` or `1` for the classification |
+| `exit-code` | `0` allowed/reported, `1` policy block, `2` input/configuration/tool error |
 | `critical-count`, `warning-count` | finding counts |
 | `plan-hash`, `policy-digest` | the plan and effective-policy digests |
 | `report-path` | path to the Markdown report |

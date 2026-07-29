@@ -35,7 +35,7 @@ outputs:
     description: 'audit or enforce'
     value: ${{ steps.prodgate.outputs.enforcement-mode }}
   exit-code:
-    description: 'The CLI exit code for the classification (0 or 1)'
+    description: '0 = allowed/reported, 1 = policy block, 2 = input/configuration/tool error'
     value: ${{ steps.prodgate.outputs.exit-code }}
   critical-count:
     description: 'Number of critical findings'

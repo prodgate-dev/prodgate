@@ -17,7 +17,7 @@
 // in a way that alters verdicts, so a policy digest identifies the exact rules.
 export const POLICY_VERSION = 'aws-default-v1'
 // When the resource coverage was last reviewed against provider behavior.
-export const POLICY_LAST_REVIEWED = '2026-07'
+export const POLICY_LAST_REVIEWED = '2026-07-29'
 
 export type Severity = 'CRITICAL' | 'WARNING' | 'INFO'
 

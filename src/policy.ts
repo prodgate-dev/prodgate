@@ -59,6 +59,9 @@ export function matchDangerousMutations(rc: ResourceChange): MutationMatch[] {
   const out: MutationMatch[] = []
   for (const rule of DANGEROUS_MUTATIONS) {
     if (!rule.appliesTo(rc.type)) continue
+    // The advertised applicable actions gate execution too, so the coverage manifest
+    // and the evaluator cannot drift.
+    if (!(rule.meta.actions as string[]).includes(rc.changeKind)) continue
     const m = rule.evaluate(rc.before, rc.after, rc.afterUnknown)
     if (m) out.push({ ...m, ruleId: rule.id })
   }

@@ -57,6 +57,11 @@ jobs:
           cp "$GITHUB_WORKSPACE/test/fixtures/delete-db.json" blocked.json
           echo '{}' > bad.json
           set +e
-          npx prodgate check blocked.json >/dev/null; test "$?" -eq 1
-          npx prodgate check bad.json >/dev/null; test "$?" -eq 2
+          npx prodgate check blocked.json >/dev/null
+          blocked_code=$?
+          npx prodgate check bad.json >/dev/null
+          invalid_code=$?
+          set -e
+          test "$blocked_code" -eq 1
+          test "$invalid_code" -eq 2
           echo "installed package exit codes verified"

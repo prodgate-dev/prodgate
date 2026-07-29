@@ -1275,6 +1275,10 @@ function matchDangerousMutations(rc) {
     for (const rule of resources_1.DANGEROUS_MUTATIONS) {
         if (!rule.appliesTo(rc.type))
             continue;
+        // The advertised applicable actions gate execution too, so the coverage manifest
+        // and the evaluator cannot drift.
+        if (!rule.meta.actions.includes(rc.changeKind))
+            continue;
         const m = rule.evaluate(rc.before, rc.after, rc.afterUnknown);
         if (m)
             out.push({ ...m, ruleId: rule.id });
@@ -1310,7 +1314,7 @@ exports.DANGEROUS_MUTATIONS = exports.DISRUPTIVE_REPLACE = exports.STATEFUL_RESO
 // in a way that alters verdicts, so a policy digest identifies the exact rules.
 exports.POLICY_VERSION = 'aws-default-v1';
 // When the resource coverage was last reviewed against provider behavior.
-exports.POLICY_LAST_REVIEWED = '2026-07';
+exports.POLICY_LAST_REVIEWED = '2026-07-29';
 // Deleting or replacing any of these can cause data loss regardless of environment
 // tags. Whether recovery is possible depends on backups, snapshots, or versioning
 // that the plan cannot see, so these are critical by default. Each entry records why.

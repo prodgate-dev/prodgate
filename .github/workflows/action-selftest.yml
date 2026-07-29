@@ -40,6 +40,7 @@ jobs:
           test "${{ steps.audit.outputs.execution-outcome }}" = "reported"
           test "${{ steps.audit.outputs.would-block }}" = "true"
           test "${{ steps.audit.outputs.critical-count }}" = "1"
+          test "${{ steps.audit.outputs.exit-code }}" = "0"
 
       # Critical plan in enforce mode: the step fails, and reports blocked.
       - id: enforce

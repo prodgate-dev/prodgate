@@ -21,7 +21,7 @@
   "scripts": {
     "prebuild": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
     "build": "tsc",
-    "build:action": "ncc build src/cli.ts -o action --no-source-map-register",
+    "build:action": "ncc build src/cli.ts -o action --no-source-map-register && node scripts/normalize-action-bundle.js",
     "typecheck": "tsc -p tsconfig.check.json",
     "prepare": "npm run build",
     "prepublishOnly": "npm run build",
