@@ -19,9 +19,12 @@ export type CoverageEntry = {
   actions: string[]
   category: string
   ruleId: string
-  severity: string
+  defaultSeverity: string
+  possibleSeverities: string[]
+  severityCondition?: string
   evidenceFields: string[]
-  limitation?: string
+  rationale: string
+  limitations: string[]
 }
 
 export type Coverage = {
@@ -29,6 +32,13 @@ export type Coverage = {
   lastReviewed: string
   entries: CoverageEntry[]
 }
+
+// Limitations shared by every stateful destruction: the plan alone cannot show
+// whether the data is recoverable.
+const STATEFUL_LIMITATIONS = [
+  'Cannot determine whether usable backups, snapshots, or versioning exist.',
+  'Cannot verify recovery time or retention settings from this plan.',
+]
 
 export function buildCoverage(): Coverage {
   const entries: CoverageEntry[] = []
@@ -40,9 +50,12 @@ export function buildCoverage(): Coverage {
       actions: ['delete', 'replace'],
       category: 'data_loss',
       ruleId: 'PG-DESTROY-STATEFUL',
-      severity: info.defaultSeverity,
+      defaultSeverity: info.defaultSeverity,
+      possibleSeverities: ['CRITICAL', 'WARNING'],
+      severityCondition: 'warning only when a declared non-production environment and not protected',
       evidenceFields: ['change.actions'],
-      limitation: info.rationale,
+      rationale: `Destroying this resource may cause data loss: ${info.rationale}.`,
+      limitations: STATEFUL_LIMITATIONS,
     })
   }
 
@@ -53,9 +66,11 @@ export function buildCoverage(): Coverage {
       actions: ['delete', 'replace'],
       category: 'availability',
       ruleId: 'PG-DISRUPTION-NOTE',
-      severity: 'INFO',
+      defaultSeverity: 'INFO',
+      possibleSeverities: ['INFO'],
       evidenceFields: [],
-      limitation: `${info.category}; reported as an informational availability note, never a finding`,
+      rationale: `Replacing or removing this ${info.category} member interrupts service while it is recreated or gone.`,
+      limitations: ['Reported as an informational availability note, never a finding, and never affects the verdict.'],
     })
   }
 
@@ -65,12 +80,15 @@ export function buildCoverage(): Coverage {
       entries.push({
         provider: 'aws',
         resourceType: type,
-        actions: ['create', 'update', 'replace'],
+        actions: rule.meta.actions,
         category: rule.meta.category,
         ruleId: rule.id,
-        severity: rule.meta.severity,
+        defaultSeverity: rule.meta.defaultSeverity,
+        possibleSeverities: rule.meta.possibleSeverities,
+        severityCondition: rule.meta.severityCondition,
         evidenceFields: rule.meta.evidenceFields,
-        limitation: rule.meta.limitation,
+        rationale: rule.meta.rationale,
+        limitations: rule.meta.limitations,
       })
     }
   }

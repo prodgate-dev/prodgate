@@ -117,6 +117,10 @@ A Terraform plan can contain secrets in plaintext (passwords, keys, tokens), eve
 - Restrict access to any CI artifact that contains a plan, and keep its retention short.
 - Remove the plan file after the check runs, as the example workflow does.
 
+## No telemetry
+
+Prodgate does not transmit Terraform plan contents, findings, repository metadata, or usage analytics anywhere. It runs locally and collects no telemetry. If a future feature ever sends anything, it will be opt-in and separately documented. The GitHub Action does call the GitHub API to post the PR comment and to read or clear the override label, using the token you provide; that is the Action interacting with your own repository, not Prodgate telemetry.
+
 ## What Prodgate flags
 
 **CRITICAL (fails CI):**

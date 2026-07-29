@@ -389,12 +389,23 @@ program
     .option('--pr-body-file <file>', 'File containing the PR body (for agent detection)')
     .action((planPath, options) => {
     emitErrorsAsJson = !!options.json;
-    if (!fs.existsSync(planPath)) {
+    let planStat = null;
+    try {
+        planStat = fs.statSync(planPath);
+    }
+    catch {
+        planStat = null;
+    }
+    if (!planStat || !planStat.isFile()) {
+        const code = planStat ? 'UNSUPPORTED_FORMAT' : 'PLAN_NOT_FOUND';
+        const message = planStat
+            ? `The plan path must reference a regular file: ${planPath}`
+            : `Plan file not found: ${planPath}`;
         if (options.json) {
-            console.log(JSON.stringify({ error: { code: 'PLAN_NOT_FOUND', message: `Plan file not found: ${planPath}` } }, null, 2));
+            console.log(JSON.stringify({ error: { code, message } }, null, 2));
         }
         else {
-            console.error(`Plan file not found: ${planPath}`);
+            console.error(message);
         }
         process.exit(2);
     }
@@ -489,7 +500,7 @@ program
     console.log(`Prodgate coverage (policy ${cov.policyVersion}, last reviewed ${cov.lastReviewed})`);
     console.log('');
     for (const e of entries) {
-        console.log(`  ${e.severity.padEnd(8)} ${e.resourceType.padEnd(40)} ${e.ruleId.padEnd(24)} ${e.category}`);
+        console.log(`  ${e.defaultSeverity.padEnd(8)} ${e.resourceType.padEnd(40)} ${e.ruleId.padEnd(26)} ${e.actions.join('/').padEnd(22)} ${e.category}`);
     }
     console.log('');
     console.log(`${entries.length} entries. Use --json for evidence fields and limitations.`);
@@ -718,6 +729,12 @@ function buildEnvelope(result, planMeta) {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.buildCoverage = buildCoverage;
 const resources_1 = __nccwpck_require__(802);
+// Limitations shared by every stateful destruction: the plan alone cannot show
+// whether the data is recoverable.
+const STATEFUL_LIMITATIONS = [
+    'Cannot determine whether usable backups, snapshots, or versioning exist.',
+    'Cannot verify recovery time or retention settings from this plan.',
+];
 function buildCoverage() {
     const entries = [];
     for (const [type, info] of Object.entries(resources_1.STATEFUL_RESOURCES)) {
@@ -727,9 +744,12 @@ function buildCoverage() {
             actions: ['delete', 'replace'],
             category: 'data_loss',
             ruleId: 'PG-DESTROY-STATEFUL',
-            severity: info.defaultSeverity,
+            defaultSeverity: info.defaultSeverity,
+            possibleSeverities: ['CRITICAL', 'WARNING'],
+            severityCondition: 'warning only when a declared non-production environment and not protected',
             evidenceFields: ['change.actions'],
-            limitation: info.rationale,
+            rationale: `Destroying this resource may cause data loss: ${info.rationale}.`,
+            limitations: STATEFUL_LIMITATIONS,
         });
     }
     for (const [type, info] of Object.entries(resources_1.DISRUPTIVE_REPLACE)) {
@@ -739,9 +759,11 @@ function buildCoverage() {
             actions: ['delete', 'replace'],
             category: 'availability',
             ruleId: 'PG-DISRUPTION-NOTE',
-            severity: 'INFO',
+            defaultSeverity: 'INFO',
+            possibleSeverities: ['INFO'],
             evidenceFields: [],
-            limitation: `${info.category}; reported as an informational availability note, never a finding`,
+            rationale: `Replacing or removing this ${info.category} member interrupts service while it is recreated or gone.`,
+            limitations: ['Reported as an informational availability note, never a finding, and never affects the verdict.'],
         });
     }
     for (const rule of resources_1.DANGEROUS_MUTATIONS) {
@@ -750,12 +772,15 @@ function buildCoverage() {
             entries.push({
                 provider: 'aws',
                 resourceType: type,
-                actions: ['create', 'update', 'replace'],
+                actions: rule.meta.actions,
                 category: rule.meta.category,
                 ruleId: rule.id,
-                severity: rule.meta.severity,
+                defaultSeverity: rule.meta.defaultSeverity,
+                possibleSeverities: rule.meta.possibleSeverities,
+                severityCondition: rule.meta.severityCondition,
                 evidenceFields: rule.meta.evidenceFields,
-                limitation: rule.meta.limitation,
+                rationale: rule.meta.rationale,
+                limitations: rule.meta.limitations,
             });
         }
     }
@@ -1466,7 +1491,17 @@ function indeterminate(attribute, what) {
 exports.DANGEROUS_MUTATIONS = [
     {
         id: 'PG-AWS-DELETION-PROTECTION',
-        meta: { category: 'recoverability', severity: 'CRITICAL', resourceTypes: 'all', evidenceFields: ['before.deletion_protection', 'after.deletion_protection'], limitation: 'evaluated only when the before state has deletion protection enabled' },
+        meta: {
+            category: 'recoverability',
+            defaultSeverity: 'CRITICAL',
+            possibleSeverities: ['CRITICAL', 'WARNING'],
+            severityCondition: 'warning when the resulting value is unknown at plan time',
+            actions: ['update', 'replace'],
+            resourceTypes: 'all',
+            evidenceFields: ['before.deletion_protection', 'after.deletion_protection'],
+            rationale: 'Turning off deletion protection removes the guard that prevents accidental destruction.',
+            limitations: ['Evaluated only when the before state already had deletion protection enabled.'],
+        },
         appliesTo: () => true,
         evaluate: (b, a, au) => {
             if (!b)
@@ -1484,7 +1519,17 @@ exports.DANGEROUS_MUTATIONS = [
     },
     {
         id: 'PG-AWS-RDS-PUBLIC',
-        meta: { category: 'exposure', severity: 'CRITICAL', resourceTypes: ['aws_db_instance', 'aws_rds_cluster', 'aws_rds_cluster_instance'], evidenceFields: ['after.publicly_accessible'] },
+        meta: {
+            category: 'exposure',
+            defaultSeverity: 'CRITICAL',
+            possibleSeverities: ['CRITICAL', 'WARNING'],
+            severityCondition: 'warning when the resulting value is unknown at plan time',
+            actions: ['create', 'update', 'replace'],
+            resourceTypes: ['aws_db_instance', 'aws_rds_cluster', 'aws_rds_cluster_instance'],
+            evidenceFields: ['after.publicly_accessible'],
+            rationale: 'Making a database publicly accessible exposes it to the internet.',
+            limitations: ['Cannot confirm the resulting value when it is computed at plan time.'],
+        },
         appliesTo: (t) => t === 'aws_db_instance' || t === 'aws_rds_cluster' || t === 'aws_rds_cluster_instance',
         // Dangerous whenever the resulting state is public and it was not already:
         // fires on an update (false -> true) and on a create (no prior state). When the
@@ -1502,7 +1547,17 @@ exports.DANGEROUS_MUTATIONS = [
     },
     {
         id: 'PG-AWS-S3-PUBLIC-ACCESS',
-        meta: { category: 'exposure', severity: 'CRITICAL', resourceTypes: ['aws_s3_bucket_public_access_block'], evidenceFields: ['after.block_public_acls', 'after.ignore_public_acls', 'after.block_public_policy', 'after.restrict_public_buckets'] },
+        meta: {
+            category: 'exposure',
+            defaultSeverity: 'CRITICAL',
+            possibleSeverities: ['CRITICAL', 'WARNING'],
+            severityCondition: 'warning when the resulting value is unknown at plan time',
+            actions: ['create', 'update', 'replace'],
+            resourceTypes: ['aws_s3_bucket_public_access_block'],
+            evidenceFields: ['after.block_public_acls', 'after.ignore_public_acls', 'after.block_public_policy', 'after.restrict_public_buckets'],
+            rationale: 'Disabling the S3 public access block can expose bucket contents to the public.',
+            limitations: ['Cannot confirm the resulting protections when they are computed at plan time.'],
+        },
         appliesTo: (t) => t === 'aws_s3_bucket_public_access_block',
         evaluate: (b, a, au) => {
             const keys = ['block_public_acls', 'ignore_public_acls', 'block_public_policy', 'restrict_public_buckets'];
@@ -1533,7 +1588,17 @@ exports.DANGEROUS_MUTATIONS = [
     },
     {
         id: 'PG-AWS-SG-WORLD-OPEN',
-        meta: { category: 'exposure', severity: 'CRITICAL', resourceTypes: ['aws_security_group', 'aws_security_group_rule', 'aws_vpc_security_group_ingress_rule'], evidenceFields: ['ingress.cidr'], limitation: 'opening a sensitive port is critical; a non-sensitive port is a warning' },
+        meta: {
+            category: 'exposure',
+            defaultSeverity: 'WARNING',
+            possibleSeverities: ['CRITICAL', 'WARNING'],
+            severityCondition: 'critical when a sensitive port (SSH, RDP, database ports) is exposed to the world',
+            actions: ['create', 'update', 'replace'],
+            resourceTypes: ['aws_security_group', 'aws_security_group_rule', 'aws_vpc_security_group_ingress_rule'],
+            evidenceFields: ['ingress.cidr'],
+            rationale: 'Opening ingress to 0.0.0.0/0 or ::/0 exposes the resource to the whole internet.',
+            limitations: ['Cannot confirm ingress rules when they are computed at plan time.'],
+        },
         appliesTo: (t) => t === 'aws_security_group' || t === 'aws_security_group_rule' || t === 'aws_vpc_security_group_ingress_rule',
         evaluate: (b, a, au) => {
             const after = openWorldRanges(a);
@@ -1563,7 +1628,16 @@ exports.DANGEROUS_MUTATIONS = [
     },
     {
         id: 'PG-AWS-IAM-WILDCARD',
-        meta: { category: 'privilege', severity: 'WARNING', resourceTypes: ['aws_iam_policy', 'aws_iam_role_policy', 'aws_iam_user_policy', 'aws_iam_group_policy'], evidenceFields: ['after.policy'] },
+        meta: {
+            category: 'privilege',
+            defaultSeverity: 'WARNING',
+            possibleSeverities: ['WARNING'],
+            actions: ['create', 'update', 'replace'],
+            resourceTypes: ['aws_iam_policy', 'aws_iam_role_policy', 'aws_iam_user_policy', 'aws_iam_group_policy'],
+            evidenceFields: ['after.policy'],
+            rationale: 'A wildcard (*) action or resource grants broad, often unintended, privileges.',
+            limitations: ['Does not assess whether the wildcard is constrained by conditions or a permissions boundary.'],
+        },
         appliesTo: (t) => t === 'aws_iam_policy' ||
             t === 'aws_iam_role_policy' ||
             t === 'aws_iam_user_policy' ||

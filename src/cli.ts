@@ -57,11 +57,21 @@ program
   .option('--pr-body-file <file>', 'File containing the PR body (for agent detection)')
   .action((planPath, options) => {
     emitErrorsAsJson = !!options.json
-    if (!fs.existsSync(planPath)) {
+    let planStat: fs.Stats | null = null
+    try {
+      planStat = fs.statSync(planPath)
+    } catch {
+      planStat = null
+    }
+    if (!planStat || !planStat.isFile()) {
+      const code = planStat ? 'UNSUPPORTED_FORMAT' : 'PLAN_NOT_FOUND'
+      const message = planStat
+        ? `The plan path must reference a regular file: ${planPath}`
+        : `Plan file not found: ${planPath}`
       if (options.json) {
-        console.log(JSON.stringify({ error: { code: 'PLAN_NOT_FOUND', message: `Plan file not found: ${planPath}` } }, null, 2))
+        console.log(JSON.stringify({ error: { code, message } }, null, 2))
       } else {
-        console.error(`Plan file not found: ${planPath}`)
+        console.error(message)
       }
       process.exit(2)
     }
@@ -161,7 +171,7 @@ program
     console.log(`Prodgate coverage (policy ${cov.policyVersion}, last reviewed ${cov.lastReviewed})`)
     console.log('')
     for (const e of entries) {
-      console.log(`  ${e.severity.padEnd(8)} ${e.resourceType.padEnd(40)} ${e.ruleId.padEnd(24)} ${e.category}`)
+      console.log(`  ${e.defaultSeverity.padEnd(8)} ${e.resourceType.padEnd(40)} ${e.ruleId.padEnd(26)} ${e.actions.join('/').padEnd(22)} ${e.category}`)
     }
     console.log('')
     console.log(`${entries.length} entries. Use --json for evidence fields and limitations.`)

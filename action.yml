@@ -122,7 +122,12 @@ runs:
           --commits-file "$RUNNER_TEMP/prodgate-commits.txt" \
           --github --output "$RUNNER_TEMP/prodgate.md" \
           --outputs-file "$GITHUB_OUTPUT"
-        echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+        code=$?
+        # Always publish the exit code, even on an input error (exit 2) where the CLI
+        # exits before writing its outputs, so consumers can tell a policy block (1)
+        # from a tool or input failure (2).
+        echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+        echo "exit-code=$code" >> "$GITHUB_OUTPUT"
 
     - name: Post or update PR comment
       if: ${{ github.event_name == 'pull_request' }}

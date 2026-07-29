@@ -13,6 +13,7 @@ import { parsePlan } from '../src/plan'
 import { classifyPlan } from '../src/classify'
 import { detectAgent } from '../src/agent'
 import { buildCoverage } from '../src/coverage'
+import { DANGEROUS_MUTATIONS } from '../src/resources'
 
 const fixture = (name: string) =>
   parsePlan(fs.readFileSync(path.join(__dirname, 'fixtures', name), 'utf8'))
@@ -275,12 +276,52 @@ console.log('─'.repeat(50))
   const r = classifyPlan(golden('no-change.tfplan.json'))
   check('golden no-change: pass, 0 scanned', r.verdict === 'pass' && r.stats.resourcesScanned === 0)
 }
+{
+  const r = classifyPlan(golden('replace-public-db.tfplan.json'))
+  const ids = r.findings.map(f => f.ruleId)
+  check('golden replace-public-db: destruction from before and public recreate from after', r.verdict === 'fail' && ids.includes('PG-DESTROY-STATEFUL') && ids.includes('PG-AWS-RDS-PUBLIC'))
+}
+{
+  const r = classifyPlan(golden('unknown-sg-cidr.tfplan.json'))
+  check('golden unknown-sg-cidr: computed ingress flagged for review, passes', r.verdict === 'pass' && r.findings.some(f => f.ruleId === 'PG-AWS-SG-WORLD-OPEN' && /unknown/i.test(f.summary)))
+}
+
+// The golden plans must not carry real secrets or identifiers.
+{
+  const dir = path.join(__dirname, 'fixtures', 'golden')
+  const files = fs.readdirSync(dir).filter(f => f.endsWith('.json'))
+  const patterns: RegExp[] = [
+    /\b\d{12}\b/,                              // AWS account id
+    /AKIA[0-9A-Z]{16}/,                        // AWS access key id
+    /BEGIN [A-Z ]*PRIVATE KEY/,               // private key
+    /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i, // email address
+  ]
+  const clean = files.every(f => {
+    const text = fs.readFileSync(path.join(dir, f), 'utf8')
+    return !patterns.some(re => re.test(text))
+  })
+  check('golden plans contain no obvious secrets or identifiers', clean && files.length >= 5)
+}
 
 // ── coverage manifest ───────────────────────────────────────────────────────
 
 {
   const cov = buildCoverage()
-  check('coverage: versioned, includes stateful db and the public-db rule', cov.policyVersion === 'aws-default-v1' && cov.entries.some(e => e.resourceType === 'aws_db_instance' && e.ruleId === 'PG-DESTROY-STATEFUL' && e.severity === 'CRITICAL') && cov.entries.some(e => e.ruleId === 'PG-AWS-RDS-PUBLIC' && e.category === 'exposure'))
+  const ids = cov.entries.map(e => e.ruleId)
+  const runtimeIds = DANGEROUS_MUTATIONS.map(r => r.id)
+  check('coverage: versioned, includes stateful db and the public-db rule', cov.policyVersion === 'aws-default-v1' && cov.entries.some(e => e.resourceType === 'aws_db_instance' && e.ruleId === 'PG-DESTROY-STATEFUL' && e.defaultSeverity === 'CRITICAL') && cov.entries.some(e => e.ruleId === 'PG-AWS-RDS-PUBLIC' && e.category === 'exposure'))
+  check('coverage: every runtime dangerous rule appears in the manifest', runtimeIds.every(id => ids.includes(id)))
+  check('coverage: every PG-AWS manifest id maps to a runtime rule', ids.filter(id => id.startsWith('PG-AWS-')).every(id => runtimeIds.includes(id)))
+  check('coverage: runtime rule ids are unique', new Set(runtimeIds).size === runtimeIds.length)
+  const dp = cov.entries.find(e => e.ruleId === 'PG-AWS-DELETION-PROTECTION')
+  check('coverage: deletion protection excludes create', !!dp && !dp.actions.includes('create') && dp.actions.includes('update'))
+  const pub = cov.entries.find(e => e.ruleId === 'PG-AWS-RDS-PUBLIC')
+  check('coverage: rds public includes create', !!pub && pub.actions.includes('create'))
+  const st = cov.entries.find(e => e.ruleId === 'PG-DESTROY-STATEFUL')
+  check('coverage: stateful includes delete and replace', !!st && st.actions.includes('delete') && st.actions.includes('replace'))
+  check('coverage: every entry has rationale, limitations, and actions', cov.entries.every(e => e.rationale.length > 0 && e.limitations.length > 0 && e.actions.length > 0))
+  check('coverage: finding rules carry evidence fields', cov.entries.filter(e => e.defaultSeverity !== 'INFO').every(e => e.evidenceFields.length > 0))
+  check('coverage: sg rule advertises both severities', (() => { const sg = cov.entries.find(e => e.ruleId === 'PG-AWS-SG-WORLD-OPEN'); return !!sg && sg.possibleSeverities.includes('CRITICAL') && sg.possibleSeverities.includes('WARNING') })())
 }
 
 // ── finding model (rule ids, category, confidence, evidence) ────────────────

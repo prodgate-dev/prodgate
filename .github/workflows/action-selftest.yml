@@ -24,6 +24,7 @@ jobs:
         run: |
           test "${{ steps.safe.outputs.execution-outcome }}" = "allowed"
           test "${{ steps.safe.outputs.policy-verdict }}" = "pass"
+          test "${{ steps.safe.outputs.exit-code }}" = "0"
           test "${{ steps.safe.outputs.engine-version }}" != ""
           test "${{ steps.safe.outputs.plan-hash }}" != ""
 
@@ -50,13 +51,17 @@ jobs:
         run: |
           test "${{ steps.enforce.outcome }}" = "failure"
           test "${{ steps.enforce.outputs.execution-outcome }}" = "blocked"
+          test "${{ steps.enforce.outputs.exit-code }}" = "1"
 
-      # Invalid input: the step fails with an evaluation error, not a policy block.
+      # Invalid input: the step fails with an evaluation error (exit 2), distinct from
+      # a policy block (exit 1). The exit-code output must still be published.
       - run: echo '{}' > plan.json
       - id: invalid
         continue-on-error: true
         uses: ./
         with:
           plan-json: plan.json
-      - name: Assert invalid input fails
-        run: test "${{ steps.invalid.outcome }}" = "failure"
+      - name: Assert invalid input fails with exit 2
+        run: |
+          test "${{ steps.invalid.outcome }}" = "failure"
+          test "${{ steps.invalid.outputs.exit-code }}" = "2"

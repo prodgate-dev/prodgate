@@ -96,14 +96,22 @@ export type MutationOutcome = {
 // A matched rule, with its id required so a finding can never lack a rule id.
 export type MutationMatch = MutationOutcome & { ruleId: string }
 
+export type TfActionKind = 'create' | 'update' | 'delete' | 'replace'
+
 // Static metadata for the coverage manifest, kept next to the rule so the two cannot
-// drift. `resourceTypes` is 'all' for rules that inspect every type.
+// drift. `resourceTypes` is 'all' for rules that inspect every type. `actions` lists
+// only the change kinds a rule can actually fire on. `rationale` is why Prodgate
+// flags it; `limitations` are what Prodgate cannot determine.
 export type RuleMeta = {
   category: RiskCategory
-  severity: Severity
+  defaultSeverity: Severity
+  possibleSeverities: Severity[]
+  severityCondition?: string
+  actions: TfActionKind[]
   resourceTypes: string[] | 'all'
   evidenceFields: string[]
-  limitation?: string
+  rationale: string
+  limitations: string[]
 }
 
 export type DangerousRule = {
@@ -235,7 +243,17 @@ function indeterminate(attribute: string, what: string): MutationOutcome {
 export const DANGEROUS_MUTATIONS: DangerousRule[] = [
   {
     id: 'PG-AWS-DELETION-PROTECTION',
-    meta: { category: 'recoverability', severity: 'CRITICAL', resourceTypes: 'all', evidenceFields: ['before.deletion_protection', 'after.deletion_protection'], limitation: 'evaluated only when the before state has deletion protection enabled' },
+    meta: {
+      category: 'recoverability',
+      defaultSeverity: 'CRITICAL',
+      possibleSeverities: ['CRITICAL', 'WARNING'],
+      severityCondition: 'warning when the resulting value is unknown at plan time',
+      actions: ['update', 'replace'],
+      resourceTypes: 'all',
+      evidenceFields: ['before.deletion_protection', 'after.deletion_protection'],
+      rationale: 'Turning off deletion protection removes the guard that prevents accidental destruction.',
+      limitations: ['Evaluated only when the before state already had deletion protection enabled.'],
+    },
     appliesTo: () => true,
     evaluate: (b, a, au) => {
       if (!b) return null
@@ -249,7 +267,17 @@ export const DANGEROUS_MUTATIONS: DangerousRule[] = [
   },
   {
     id: 'PG-AWS-RDS-PUBLIC',
-    meta: { category: 'exposure', severity: 'CRITICAL', resourceTypes: ['aws_db_instance', 'aws_rds_cluster', 'aws_rds_cluster_instance'], evidenceFields: ['after.publicly_accessible'] },
+    meta: {
+      category: 'exposure',
+      defaultSeverity: 'CRITICAL',
+      possibleSeverities: ['CRITICAL', 'WARNING'],
+      severityCondition: 'warning when the resulting value is unknown at plan time',
+      actions: ['create', 'update', 'replace'],
+      resourceTypes: ['aws_db_instance', 'aws_rds_cluster', 'aws_rds_cluster_instance'],
+      evidenceFields: ['after.publicly_accessible'],
+      rationale: 'Making a database publicly accessible exposes it to the internet.',
+      limitations: ['Cannot confirm the resulting value when it is computed at plan time.'],
+    },
     appliesTo: (t) => t === 'aws_db_instance' || t === 'aws_rds_cluster' || t === 'aws_rds_cluster_instance',
     // Dangerous whenever the resulting state is public and it was not already:
     // fires on an update (false -> true) and on a create (no prior state). When the
@@ -267,7 +295,17 @@ export const DANGEROUS_MUTATIONS: DangerousRule[] = [
   },
   {
     id: 'PG-AWS-S3-PUBLIC-ACCESS',
-    meta: { category: 'exposure', severity: 'CRITICAL', resourceTypes: ['aws_s3_bucket_public_access_block'], evidenceFields: ['after.block_public_acls', 'after.ignore_public_acls', 'after.block_public_policy', 'after.restrict_public_buckets'] },
+    meta: {
+      category: 'exposure',
+      defaultSeverity: 'CRITICAL',
+      possibleSeverities: ['CRITICAL', 'WARNING'],
+      severityCondition: 'warning when the resulting value is unknown at plan time',
+      actions: ['create', 'update', 'replace'],
+      resourceTypes: ['aws_s3_bucket_public_access_block'],
+      evidenceFields: ['after.block_public_acls', 'after.ignore_public_acls', 'after.block_public_policy', 'after.restrict_public_buckets'],
+      rationale: 'Disabling the S3 public access block can expose bucket contents to the public.',
+      limitations: ['Cannot confirm the resulting protections when they are computed at plan time.'],
+    },
     appliesTo: (t) => t === 'aws_s3_bucket_public_access_block',
     evaluate: (b, a, au) => {
       const keys = ['block_public_acls', 'ignore_public_acls', 'block_public_policy', 'restrict_public_buckets']
@@ -296,7 +334,17 @@ export const DANGEROUS_MUTATIONS: DangerousRule[] = [
   },
   {
     id: 'PG-AWS-SG-WORLD-OPEN',
-    meta: { category: 'exposure', severity: 'CRITICAL', resourceTypes: ['aws_security_group', 'aws_security_group_rule', 'aws_vpc_security_group_ingress_rule'], evidenceFields: ['ingress.cidr'], limitation: 'opening a sensitive port is critical; a non-sensitive port is a warning' },
+    meta: {
+      category: 'exposure',
+      defaultSeverity: 'WARNING',
+      possibleSeverities: ['CRITICAL', 'WARNING'],
+      severityCondition: 'critical when a sensitive port (SSH, RDP, database ports) is exposed to the world',
+      actions: ['create', 'update', 'replace'],
+      resourceTypes: ['aws_security_group', 'aws_security_group_rule', 'aws_vpc_security_group_ingress_rule'],
+      evidenceFields: ['ingress.cidr'],
+      rationale: 'Opening ingress to 0.0.0.0/0 or ::/0 exposes the resource to the whole internet.',
+      limitations: ['Cannot confirm ingress rules when they are computed at plan time.'],
+    },
     appliesTo: (t) =>
       t === 'aws_security_group' || t === 'aws_security_group_rule' || t === 'aws_vpc_security_group_ingress_rule',
     evaluate: (b, a, au) => {
@@ -327,7 +375,16 @@ export const DANGEROUS_MUTATIONS: DangerousRule[] = [
   },
   {
     id: 'PG-AWS-IAM-WILDCARD',
-    meta: { category: 'privilege', severity: 'WARNING', resourceTypes: ['aws_iam_policy', 'aws_iam_role_policy', 'aws_iam_user_policy', 'aws_iam_group_policy'], evidenceFields: ['after.policy'] },
+    meta: {
+      category: 'privilege',
+      defaultSeverity: 'WARNING',
+      possibleSeverities: ['WARNING'],
+      actions: ['create', 'update', 'replace'],
+      resourceTypes: ['aws_iam_policy', 'aws_iam_role_policy', 'aws_iam_user_policy', 'aws_iam_group_policy'],
+      evidenceFields: ['after.policy'],
+      rationale: 'A wildcard (*) action or resource grants broad, often unintended, privileges.',
+      limitations: ['Does not assess whether the wildcard is constrained by conditions or a permissions boundary.'],
+    },
     appliesTo: (t) =>
       t === 'aws_iam_policy' ||
       t === 'aws_iam_role_policy' ||

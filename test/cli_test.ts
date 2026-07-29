@@ -57,6 +57,8 @@ check('fail-on warning exits 1 on a warning-only plan', run(['check', fixture('d
 
 // Invalid input fails closed with exit 2.
 check('missing plan file exits 2', run(['check', path.join(os.tmpdir(), 'does-not-exist-xyz.json')]).code === 2)
+check('directory path exits 2', run(['check', path.join(__dirname, 'fixtures')]).code === 2)
+check('empty file exits 2', run(['check', writeTmp('')]).code === 2)
 check('empty object plan exits 2', run(['check', writeTmp('{}')]).code === 2)
 check('state-shaped input exits 2', run(['check', writeTmp('{"format_version":"1.0","values":{}}')]).code === 2)
 check('json error carries a code', (() => {
@@ -196,6 +198,17 @@ check('coverage --json lists rules with ids', (() => {
   } catch { return false }
 })())
 check('coverage human output lists a resource type', run(['coverage']).stdout.includes('aws_db_instance'))
+check('coverage --provider aws only filters, does not mutate', (() => {
+  try {
+    const all = JSON.parse(run(['coverage', '--json']).stdout).entries
+    const aws = JSON.parse(run(['coverage', '--provider', 'aws', '--json']).stdout).entries
+    return all.length === aws.length && JSON.stringify(all) === JSON.stringify(aws)
+  } catch { return false }
+})())
+check('coverage --provider gcp is empty', (() => {
+  try { return JSON.parse(run(['coverage', '--provider', 'gcp', '--json']).stdout).entries.length === 0 } catch { return false }
+})())
+check('coverage --json is stable across runs', run(['coverage', '--json']).stdout === run(['coverage', '--json']).stdout)
 
 // --outputs-file writes the CI key=value pairs the Action exposes.
 {

@@ -91,8 +91,10 @@ npm run build
 npm test
 ```
 
-`npm test` runs the classification suite. Keep it green, and add to it with every
-change. To see the output for a plan while you work:
+`npm test` runs the classification and CLI suites (it builds first). `npm run typecheck`
+runs the strict TypeScript check over the source and the tests. Strict TypeScript is
+the static-analysis gate for this project; there is no separate linter. Keep both
+green, and add tests with every change. To see the output for a plan while you work:
 
 ```bash
 node dist/cli.js check test/fixtures/my-case.json --github

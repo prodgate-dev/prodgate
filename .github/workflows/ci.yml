@@ -12,8 +12,8 @@ jobs:
       matrix:
         node-version: ['20', '22', '24']
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: ${{ matrix.node-version }}
       - run: npm ci
@@ -24,11 +24,39 @@ jobs:
   action-bundle:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '22'
       - run: npm ci
       - run: npm run build:action
       - name: Verify the committed action bundle matches source
         run: git diff --exit-code action/
+
+  pack-install:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+      - run: npm ci
+      - name: Pack and smoke-test the installed package
+        run: |
+          set -e
+          npm pack
+          TGZ="$GITHUB_WORKSPACE/$(ls prodgate-*.tgz)"
+          WORK="$(mktemp -d)"
+          cd "$WORK"
+          npm init -y >/dev/null 2>&1
+          npm install "$TGZ" >/dev/null 2>&1
+          npx prodgate --version
+          npx prodgate coverage --json >/dev/null
+          echo '{"format_version":"1.2","resource_changes":[]}' > safe.json
+          npx prodgate check safe.json
+          cp "$GITHUB_WORKSPACE/test/fixtures/delete-db.json" blocked.json
+          echo '{}' > bad.json
+          set +e
+          npx prodgate check blocked.json >/dev/null; test "$?" -eq 1
+          npx prodgate check bad.json >/dev/null; test "$?" -eq 2
+          echo "installed package exit codes verified"
