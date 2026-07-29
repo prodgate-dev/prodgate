@@ -37,6 +37,10 @@ function plan1(type: string, name: string, change: any) {
 function hasUnknownWarning(r: { findings: { severity: string; summary: string }[] }): boolean {
   return r.findings.some(f => f.severity === 'WARNING' && /unknown/i.test(f.summary))
 }
+// Golden plans captured from real `terraform show -json` output (see the folder's
+// README for versions), to catch real field shapes synthetic fixtures might miss.
+const golden = (name: string) =>
+  parsePlan(fs.readFileSync(path.join(__dirname, 'fixtures', 'golden', name), 'utf8'))
 
 console.log('\nProdgate plan classification')
 console.log('─'.repeat(50))
@@ -254,6 +258,22 @@ console.log('─'.repeat(50))
   check('agent: PR-body generated marker flagged', detectAgent({ prBody: '🤖 Generated with Claude Code' }).likelyAgent === true)
   check('agent: renovate[bot] not an AI agent', detectAgent({ author: 'renovate[bot]' }).likelyAgent === false)
   check('agent: dependabot[bot] not an AI agent', detectAgent({ author: 'dependabot[bot]' }).likelyAgent === false)
+}
+
+// ── real golden plans (terraform show -json) ────────────────────────────────
+
+{
+  const r = classifyPlan(golden('create-exposures.tfplan.json'))
+  const ids = r.findings.map(f => f.ruleId)
+  check('golden create-exposures: public db, s3, and sg are all critical', r.verdict === 'fail' && r.stats.criticalCount === 3 && ids.includes('PG-AWS-RDS-PUBLIC') && ids.includes('PG-AWS-S3-PUBLIC-ACCESS') && ids.includes('PG-AWS-SG-WORLD-OPEN'))
+}
+{
+  const r = classifyPlan(golden('destroy-prod-db.tfplan.json'))
+  check('golden destroy-prod-db: stateful destruction is critical', r.verdict === 'fail' && r.findings.some(f => f.ruleId === 'PG-DESTROY-STATEFUL' && f.severity === 'CRITICAL'))
+}
+{
+  const r = classifyPlan(golden('no-change.tfplan.json'))
+  check('golden no-change: pass, 0 scanned', r.verdict === 'pass' && r.stats.resourcesScanned === 0)
 }
 
 // ── coverage manifest ───────────────────────────────────────────────────────

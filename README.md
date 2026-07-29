@@ -244,7 +244,7 @@ These are standard for any CI-side policy check (OPA, Checkov, and others share 
 | GCP / Azure | Planned |
 | Pulumi / CDK / CloudFormation | Not supported |
 
-Coverage is a data table (`src/resources.ts`), so adding a resource type or a risk rule is an edit, not a rewrite.
+Coverage is a data table (`src/resources.ts`), so adding a resource type or a risk rule is an edit, not a rewrite. Run `prodgate coverage` (or `prodgate coverage --json`) to see exactly which resource types and rules are evaluated.
 
 ## How this compares
 
