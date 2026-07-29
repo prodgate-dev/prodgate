@@ -6,7 +6,9 @@ const path = require('path')
 
 const file = path.join(__dirname, '..', 'action', 'index.js')
 const text = fs.readFileSync(file, 'utf8')
-const normalized = text.replace(/\r\n/g, '\n')
+// Convert CRLF and lone CR to LF. ncc on Windows terminates the injected shebang
+// line with a bare CR, which a CRLF-only replace would miss.
+const normalized = text.replace(/\r\n?/g, '\n')
 if (normalized !== text) {
   fs.writeFileSync(file, normalized)
 }
