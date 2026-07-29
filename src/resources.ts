@@ -16,6 +16,8 @@
 // The named version of the built-in rule set. Bump it when the tables below change
 // in a way that alters verdicts, so a policy digest identifies the exact rules.
 export const POLICY_VERSION = 'aws-default-v1'
+// When the resource coverage was last reviewed against provider behavior.
+export const POLICY_LAST_REVIEWED = '2026-07'
 
 export type Severity = 'CRITICAL' | 'WARNING' | 'INFO'
 
@@ -94,8 +96,19 @@ export type MutationOutcome = {
 // A matched rule, with its id required so a finding can never lack a rule id.
 export type MutationMatch = MutationOutcome & { ruleId: string }
 
+// Static metadata for the coverage manifest, kept next to the rule so the two cannot
+// drift. `resourceTypes` is 'all' for rules that inspect every type.
+export type RuleMeta = {
+  category: RiskCategory
+  severity: Severity
+  resourceTypes: string[] | 'all'
+  evidenceFields: string[]
+  limitation?: string
+}
+
 export type DangerousRule = {
   id: string
+  meta: RuleMeta
   appliesTo: (type: string) => boolean
   evaluate: (before: any, after: any, afterUnknown: any) => MutationOutcome | null
 }
@@ -222,6 +235,7 @@ function indeterminate(attribute: string, what: string): MutationOutcome {
 export const DANGEROUS_MUTATIONS: DangerousRule[] = [
   {
     id: 'PG-AWS-DELETION-PROTECTION',
+    meta: { category: 'recoverability', severity: 'CRITICAL', resourceTypes: 'all', evidenceFields: ['before.deletion_protection', 'after.deletion_protection'], limitation: 'evaluated only when the before state has deletion protection enabled' },
     appliesTo: () => true,
     evaluate: (b, a, au) => {
       if (!b) return null
@@ -235,6 +249,7 @@ export const DANGEROUS_MUTATIONS: DangerousRule[] = [
   },
   {
     id: 'PG-AWS-RDS-PUBLIC',
+    meta: { category: 'exposure', severity: 'CRITICAL', resourceTypes: ['aws_db_instance', 'aws_rds_cluster', 'aws_rds_cluster_instance'], evidenceFields: ['after.publicly_accessible'] },
     appliesTo: (t) => t === 'aws_db_instance' || t === 'aws_rds_cluster' || t === 'aws_rds_cluster_instance',
     // Dangerous whenever the resulting state is public and it was not already:
     // fires on an update (false -> true) and on a create (no prior state). When the
@@ -252,6 +267,7 @@ export const DANGEROUS_MUTATIONS: DangerousRule[] = [
   },
   {
     id: 'PG-AWS-S3-PUBLIC-ACCESS',
+    meta: { category: 'exposure', severity: 'CRITICAL', resourceTypes: ['aws_s3_bucket_public_access_block'], evidenceFields: ['after.block_public_acls', 'after.ignore_public_acls', 'after.block_public_policy', 'after.restrict_public_buckets'] },
     appliesTo: (t) => t === 'aws_s3_bucket_public_access_block',
     evaluate: (b, a, au) => {
       const keys = ['block_public_acls', 'ignore_public_acls', 'block_public_policy', 'restrict_public_buckets']
@@ -280,6 +296,7 @@ export const DANGEROUS_MUTATIONS: DangerousRule[] = [
   },
   {
     id: 'PG-AWS-SG-WORLD-OPEN',
+    meta: { category: 'exposure', severity: 'CRITICAL', resourceTypes: ['aws_security_group', 'aws_security_group_rule', 'aws_vpc_security_group_ingress_rule'], evidenceFields: ['ingress.cidr'], limitation: 'opening a sensitive port is critical; a non-sensitive port is a warning' },
     appliesTo: (t) =>
       t === 'aws_security_group' || t === 'aws_security_group_rule' || t === 'aws_vpc_security_group_ingress_rule',
     evaluate: (b, a, au) => {
@@ -310,6 +327,7 @@ export const DANGEROUS_MUTATIONS: DangerousRule[] = [
   },
   {
     id: 'PG-AWS-IAM-WILDCARD',
+    meta: { category: 'privilege', severity: 'WARNING', resourceTypes: ['aws_iam_policy', 'aws_iam_role_policy', 'aws_iam_user_policy', 'aws_iam_group_policy'], evidenceFields: ['after.policy'] },
     appliesTo: (t) =>
       t === 'aws_iam_policy' ||
       t === 'aws_iam_role_policy' ||

@@ -12,6 +12,7 @@ import * as path from 'path'
 import { parsePlan } from '../src/plan'
 import { classifyPlan } from '../src/classify'
 import { detectAgent } from '../src/agent'
+import { buildCoverage } from '../src/coverage'
 
 const fixture = (name: string) =>
   parsePlan(fs.readFileSync(path.join(__dirname, 'fixtures', name), 'utf8'))
@@ -253,6 +254,13 @@ console.log('─'.repeat(50))
   check('agent: PR-body generated marker flagged', detectAgent({ prBody: '🤖 Generated with Claude Code' }).likelyAgent === true)
   check('agent: renovate[bot] not an AI agent', detectAgent({ author: 'renovate[bot]' }).likelyAgent === false)
   check('agent: dependabot[bot] not an AI agent', detectAgent({ author: 'dependabot[bot]' }).likelyAgent === false)
+}
+
+// ── coverage manifest ───────────────────────────────────────────────────────
+
+{
+  const cov = buildCoverage()
+  check('coverage: versioned, includes stateful db and the public-db rule', cov.policyVersion === 'aws-default-v1' && cov.entries.some(e => e.resourceType === 'aws_db_instance' && e.ruleId === 'PG-DESTROY-STATEFUL' && e.severity === 'CRITICAL') && cov.entries.some(e => e.ruleId === 'PG-AWS-RDS-PUBLIC' && e.category === 'exposure'))
 }
 
 // ── finding model (rule ids, category, confidence, evidence) ────────────────

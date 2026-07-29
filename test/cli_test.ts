@@ -177,7 +177,25 @@ check('clean plan with --override reports allowed and no applied override', (() 
   check('changing fail-on changes the digest', digestOf([]) !== digestOf(['--fail-on', 'warning']))
   const cfg = writeTmp('{"ignore":["a.*"]}')
   check('changing an exception changes the digest', digestOf([]) !== digestOf(['--config', cfg]))
+
+  // Semantic equivalence: policies that mean the same thing hash the same.
+  const reordered = digestOf(['--config', writeTmp('{"ignore":["b.*","a.*","a.*"]}')])
+  const canonical = digestOf(['--config', writeTmp('{"ignore":["a.*","b.*"]}')])
+  check('digest: reordered and duplicated patterns are equivalent', reordered !== '' && reordered === canonical)
+  check('digest: allowDestroy alias equals allowDestruction', digestOf(['--config', writeTmp('{"allowDestroy":["x.y"]}')]) === digestOf(['--config', writeTmp('{"allowDestruction":["x.y"]}')]))
+  check('digest: object key order does not matter', digestOf(['--config', writeTmp('{"mode":"audit","failOn":"warning"}')]) === digestOf(['--config', writeTmp('{"failOn":"warning","mode":"audit"}')]))
+  check('digest: a CLI override matches the equivalent config', digestOf(['--config', writeTmp('{"mode":"audit"}'), '--mode', 'enforce']) === digestOf(['--config', writeTmp('{"mode":"enforce"}')]))
 }
+
+// coverage command.
+check('coverage --json lists rules with ids', (() => {
+  const r = run(['coverage', '--json'])
+  try {
+    const o = JSON.parse(r.stdout)
+    return o.entries.length > 10 && o.policyVersion === 'aws-default-v1' && o.entries.some((e: any) => e.ruleId === 'PG-AWS-RDS-PUBLIC')
+  } catch { return false }
+})())
+check('coverage human output lists a resource type', run(['coverage']).stdout.includes('aws_db_instance'))
 
 // --outputs-file writes the CI key=value pairs the Action exposes.
 {

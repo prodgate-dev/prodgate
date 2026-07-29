@@ -1,0 +1,53 @@
+name: Missed dangerous change (false negative)
+description: Prodgate did not flag a change that should have been flagged
+labels: ["false-negative"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not attach a raw production plan. Terraform plan JSON can contain plaintext
+        secrets. Share only the fields below and a minimal, sanitized reproduction.
+        See the redaction guide in docs/reporting.md.
+  - type: input
+    id: version
+    attributes:
+      label: Prodgate version
+      placeholder: "1.0.0"
+    validations:
+      required: true
+  - type: input
+    id: policy-digest
+    attributes:
+      label: Policy digest
+      placeholder: "sha256:..."
+  - type: input
+    id: resource-type
+    attributes:
+      label: Resource type
+      placeholder: "aws_db_instance"
+    validations:
+      required: true
+  - type: dropdown
+    id: action
+    attributes:
+      label: Terraform action
+      options: [create, update, delete, replace]
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What should have been flagged, and why
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What Prodgate reported instead
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal sanitized reproduction
+      description: A small resource_changes snippet with values redacted, if you can share one.

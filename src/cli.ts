@@ -20,6 +20,7 @@ import { parsePlanFull } from './plan'
 import { detectAgent, AgentMetadata } from './agent'
 import { classifyPlan, Config, EnforcementMode, FailOn, PlanResult } from './classify'
 import { POLICY_VERSION } from './resources'
+import { buildCoverage } from './coverage'
 import { formatHuman, formatGithub } from './output'
 
 const ENGINE_VERSION: string = require('../package.json').version
@@ -143,6 +144,27 @@ program
     if (result.verdict === 'fail') {
       process.exit(1)
     }
+  })
+
+program
+  .command('coverage')
+  .description('Show what Prodgate evaluates: providers, resource types, and rules')
+  .option('--json', 'Output raw JSON')
+  .option('--provider <provider>', 'Filter by provider')
+  .action((options) => {
+    const cov = buildCoverage()
+    const entries = options.provider ? cov.entries.filter(e => e.provider === options.provider) : cov.entries
+    if (options.json) {
+      console.log(JSON.stringify({ policyVersion: cov.policyVersion, lastReviewed: cov.lastReviewed, entries }, null, 2))
+      return
+    }
+    console.log(`Prodgate coverage (policy ${cov.policyVersion}, last reviewed ${cov.lastReviewed})`)
+    console.log('')
+    for (const e of entries) {
+      console.log(`  ${e.severity.padEnd(8)} ${e.resourceType.padEnd(40)} ${e.ruleId.padEnd(24)} ${e.category}`)
+    }
+    console.log('')
+    console.log(`${entries.length} entries. Use --json for evidence fields and limitations.`)
   })
 
 program.parse()

@@ -357,6 +357,7 @@ const plan_1 = __nccwpck_require__(464);
 const agent_1 = __nccwpck_require__(598);
 const classify_1 = __nccwpck_require__(813);
 const resources_1 = __nccwpck_require__(802);
+const coverage_1 = __nccwpck_require__(713);
 const output_1 = __nccwpck_require__(202);
 const ENGINE_VERSION = (__nccwpck_require__(330)/* .version */ .rE);
 // Set once per run so config errors can be emitted as JSON alongside plan-input
@@ -472,6 +473,26 @@ program
     if (result.verdict === 'fail') {
         process.exit(1);
     }
+});
+program
+    .command('coverage')
+    .description('Show what Prodgate evaluates: providers, resource types, and rules')
+    .option('--json', 'Output raw JSON')
+    .option('--provider <provider>', 'Filter by provider')
+    .action((options) => {
+    const cov = (0, coverage_1.buildCoverage)();
+    const entries = options.provider ? cov.entries.filter(e => e.provider === options.provider) : cov.entries;
+    if (options.json) {
+        console.log(JSON.stringify({ policyVersion: cov.policyVersion, lastReviewed: cov.lastReviewed, entries }, null, 2));
+        return;
+    }
+    console.log(`Prodgate coverage (policy ${cov.policyVersion}, last reviewed ${cov.lastReviewed})`);
+    console.log('');
+    for (const e of entries) {
+        console.log(`  ${e.severity.padEnd(8)} ${e.resourceType.padEnd(40)} ${e.ruleId.padEnd(24)} ${e.category}`);
+    }
+    console.log('');
+    console.log(`${entries.length} entries. Use --json for evidence fields and limitations.`);
 });
 program.parse();
 // Read a text file, honoring a UTF-16 byte-order mark. PowerShell's `>` and
@@ -678,6 +699,67 @@ function buildEnvelope(result, planMeta) {
     if (source)
         envelope.source = source;
     return envelope;
+}
+
+
+/***/ }),
+
+/***/ 713:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+/**
+ * coverage.ts
+ *
+ * Generates the coverage manifest from the rule tables, so what Prodgate advertises
+ * cannot drift from what it actually evaluates.
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.buildCoverage = buildCoverage;
+const resources_1 = __nccwpck_require__(802);
+function buildCoverage() {
+    const entries = [];
+    for (const [type, info] of Object.entries(resources_1.STATEFUL_RESOURCES)) {
+        entries.push({
+            provider: 'aws',
+            resourceType: type,
+            actions: ['delete', 'replace'],
+            category: 'data_loss',
+            ruleId: 'PG-DESTROY-STATEFUL',
+            severity: info.defaultSeverity,
+            evidenceFields: ['change.actions'],
+            limitation: info.rationale,
+        });
+    }
+    for (const [type, info] of Object.entries(resources_1.DISRUPTIVE_REPLACE)) {
+        entries.push({
+            provider: 'aws',
+            resourceType: type,
+            actions: ['delete', 'replace'],
+            category: 'availability',
+            ruleId: 'PG-DISRUPTION-NOTE',
+            severity: 'INFO',
+            evidenceFields: [],
+            limitation: `${info.category}; reported as an informational availability note, never a finding`,
+        });
+    }
+    for (const rule of resources_1.DANGEROUS_MUTATIONS) {
+        const types = rule.meta.resourceTypes === 'all' ? ['(all resource types)'] : rule.meta.resourceTypes;
+        for (const type of types) {
+            entries.push({
+                provider: 'aws',
+                resourceType: type,
+                actions: ['create', 'update', 'replace'],
+                category: rule.meta.category,
+                ruleId: rule.id,
+                severity: rule.meta.severity,
+                evidenceFields: rule.meta.evidenceFields,
+                limitation: rule.meta.limitation,
+            });
+        }
+    }
+    return { policyVersion: resources_1.POLICY_VERSION, lastReviewed: resources_1.POLICY_LAST_REVIEWED, entries };
 }
 
 
@@ -1198,10 +1280,12 @@ function matchDangerousMutations(rc) {
  * AWS-first for v1. Other providers are added by extending these tables.
  */
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.DANGEROUS_MUTATIONS = exports.DISRUPTIVE_REPLACE = exports.STATEFUL_RESOURCES = exports.POLICY_VERSION = void 0;
+exports.DANGEROUS_MUTATIONS = exports.DISRUPTIVE_REPLACE = exports.STATEFUL_RESOURCES = exports.POLICY_LAST_REVIEWED = exports.POLICY_VERSION = void 0;
 // The named version of the built-in rule set. Bump it when the tables below change
 // in a way that alters verdicts, so a policy digest identifies the exact rules.
 exports.POLICY_VERSION = 'aws-default-v1';
+// When the resource coverage was last reviewed against provider behavior.
+exports.POLICY_LAST_REVIEWED = '2026-07';
 // Deleting or replacing any of these can cause data loss regardless of environment
 // tags. Whether recovery is possible depends on backups, snapshots, or versioning
 // that the plan cannot see, so these are critical by default. Each entry records why.
@@ -1382,6 +1466,7 @@ function indeterminate(attribute, what) {
 exports.DANGEROUS_MUTATIONS = [
     {
         id: 'PG-AWS-DELETION-PROTECTION',
+        meta: { category: 'recoverability', severity: 'CRITICAL', resourceTypes: 'all', evidenceFields: ['before.deletion_protection', 'after.deletion_protection'], limitation: 'evaluated only when the before state has deletion protection enabled' },
         appliesTo: () => true,
         evaluate: (b, a, au) => {
             if (!b)
@@ -1399,6 +1484,7 @@ exports.DANGEROUS_MUTATIONS = [
     },
     {
         id: 'PG-AWS-RDS-PUBLIC',
+        meta: { category: 'exposure', severity: 'CRITICAL', resourceTypes: ['aws_db_instance', 'aws_rds_cluster', 'aws_rds_cluster_instance'], evidenceFields: ['after.publicly_accessible'] },
         appliesTo: (t) => t === 'aws_db_instance' || t === 'aws_rds_cluster' || t === 'aws_rds_cluster_instance',
         // Dangerous whenever the resulting state is public and it was not already:
         // fires on an update (false -> true) and on a create (no prior state). When the
@@ -1416,6 +1502,7 @@ exports.DANGEROUS_MUTATIONS = [
     },
     {
         id: 'PG-AWS-S3-PUBLIC-ACCESS',
+        meta: { category: 'exposure', severity: 'CRITICAL', resourceTypes: ['aws_s3_bucket_public_access_block'], evidenceFields: ['after.block_public_acls', 'after.ignore_public_acls', 'after.block_public_policy', 'after.restrict_public_buckets'] },
         appliesTo: (t) => t === 'aws_s3_bucket_public_access_block',
         evaluate: (b, a, au) => {
             const keys = ['block_public_acls', 'ignore_public_acls', 'block_public_policy', 'restrict_public_buckets'];
@@ -1446,6 +1533,7 @@ exports.DANGEROUS_MUTATIONS = [
     },
     {
         id: 'PG-AWS-SG-WORLD-OPEN',
+        meta: { category: 'exposure', severity: 'CRITICAL', resourceTypes: ['aws_security_group', 'aws_security_group_rule', 'aws_vpc_security_group_ingress_rule'], evidenceFields: ['ingress.cidr'], limitation: 'opening a sensitive port is critical; a non-sensitive port is a warning' },
         appliesTo: (t) => t === 'aws_security_group' || t === 'aws_security_group_rule' || t === 'aws_vpc_security_group_ingress_rule',
         evaluate: (b, a, au) => {
             const after = openWorldRanges(a);
@@ -1475,6 +1563,7 @@ exports.DANGEROUS_MUTATIONS = [
     },
     {
         id: 'PG-AWS-IAM-WILDCARD',
+        meta: { category: 'privilege', severity: 'WARNING', resourceTypes: ['aws_iam_policy', 'aws_iam_role_policy', 'aws_iam_user_policy', 'aws_iam_group_policy'], evidenceFields: ['after.policy'] },
         appliesTo: (t) => t === 'aws_iam_policy' ||
             t === 'aws_iam_role_policy' ||
             t === 'aws_iam_user_policy' ||
