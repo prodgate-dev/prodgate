@@ -36,7 +36,7 @@ increments the major version.
 | `mode` | enum | `audit` or `enforce`. |
 | `failOn` | enum | `critical`, `warning`, or `never`. |
 | `policyVerdict` | enum | `pass` or `fail`, from the findings and `failOn`, independent of mode. |
-| `wouldBlock` | boolean | `true` if this would block a merge in enforce mode (policy fails and no override). |
+| `wouldBlock` | boolean | `true` when the findings cross the configured threshold, before mode or override is applied. It stays `true` on an overridden evaluation. |
 | `executionOutcome` | enum | `allowed`, `blocked`, `reported` (audit saw a failure), or `overridden`. |
 | `override` | object | Present only when an override was applied: `{ applied, mechanism, label?, workflowActor?, headSha? }`. `workflowActor` is the actor who triggered the run, not a verified approver. |
 

@@ -36,7 +36,11 @@ const NONPROD_NAME = /(^|[_\-./])(non|pre)[_\-.]?prod/i
 // for both sides of a replace, so it is passed in rather than read from one side.
 export function isProductionTags(tags: Record<string, string>, address: string): boolean {
   for (const [k, v] of Object.entries(tags)) {
-    if (PROD_TAG_KEYS.includes(k.toLowerCase()) && PROD_VALUE.test(v)) return true
+    const key = k.toLowerCase()
+    if (PROD_TAG_KEYS.includes(key) && PROD_VALUE.test(v)) return true
+    // A Name that reads as production escalates only. It is never used to downgrade,
+    // so Name=dev on an untagged stateful resource still fails closed.
+    if (key === 'name' && PROD_NAME.test(v) && !NONPROD_NAME.test(v)) return true
   }
   return PROD_NAME.test(address) && !NONPROD_NAME.test(address)
 }

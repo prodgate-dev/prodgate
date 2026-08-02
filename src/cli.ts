@@ -35,6 +35,12 @@ program
   .name('prodgate')
   .description('Block destructive infrastructure changes in CI before they ship')
   .version(require('../package.json').version)
+  // A malformed invocation is a usage error, not a policy block, so it must not share
+  // exit code 1 with a blocked plan. --help and --version still exit 0.
+  .exitOverride((err) => {
+    const ok = err.code === 'commander.helpDisplayed' || err.code === 'commander.help' || err.code === 'commander.version'
+    process.exit(ok ? 0 : 2)
+  })
 
 program
   .command('check')
@@ -248,11 +254,19 @@ function loadConfig(p?: string): Config | undefined {
   return raw as Config
 }
 
+function optionError(message: string): never {
+  if (emitErrorsAsJson) {
+    console.log(JSON.stringify({ error: { code: 'INVALID_OPTION', message } }, null, 2))
+  } else {
+    console.error(message)
+  }
+  process.exit(2)
+}
+
 function resolveMode(flag: string | undefined, config?: Config): EnforcementMode {
   const v = flag ?? config?.mode ?? 'enforce'
   if (v !== 'audit' && v !== 'enforce') {
-    console.error(`Invalid --mode "${v}" (expected "audit" or "enforce").`)
-    process.exit(2)
+    optionError(`Invalid --mode "${v}"; expected audit or enforce.`)
   }
   return v
 }
@@ -260,8 +274,7 @@ function resolveMode(flag: string | undefined, config?: Config): EnforcementMode
 function resolveFailOn(flag: string | undefined, strict: boolean, config?: Config): FailOn {
   const v = flag ?? config?.failOn ?? (strict ? 'warning' : 'critical')
   if (v !== 'critical' && v !== 'warning' && v !== 'never') {
-    console.error(`Invalid --fail-on "${v}" (expected "critical", "warning", or "never").`)
-    process.exit(2)
+    optionError(`Invalid --fail-on "${v}"; expected critical, warning, or never.`)
   }
   return v
 }

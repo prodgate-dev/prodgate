@@ -5,3 +5,5 @@ dist/
 *.log
 npm-debug.log*
 *.tgz
+plan.json
+*.tfplan

@@ -14,6 +14,7 @@ import { classifyPlan } from '../src/classify'
 import { detectAgent } from '../src/agent'
 import { buildCoverage } from '../src/coverage'
 import { DANGEROUS_MUTATIONS } from '../src/resources'
+import { formatGithub } from '../src/output'
 
 const fixture = (name: string) =>
   parsePlan(fs.readFileSync(path.join(__dirname, 'fixtures', name), 'utf8'))
@@ -303,6 +304,25 @@ console.log('─'.repeat(50))
   check('golden plans contain no obvious secrets or identifiers', clean && files.length >= 5)
 }
 
+// ── markdown safety ─────────────────────────────────────────────────────────
+
+// A crafted for-each key must not break out of the code span in the PR comment.
+{
+  const changes = parsePlan(JSON.stringify({
+    format_version: '1.2',
+    resource_changes: [{
+      address: 'aws_db_instance.main["`x` **bold**"]',
+      type: 'aws_db_instance',
+      name: 'main',
+      mode: 'managed',
+      change: { actions: ['delete'], before: { identifier: 'db' }, after: null },
+    }],
+  }))
+  const md = formatGithub(classifyPlan(changes))
+  const line = md.split('\n').find(l => l.includes('DELETE')) ?? ''
+  check('github output escapes backticks in a resource address', !line.includes('`x`') && line.includes("'x'"))
+}
+
 // ── coverage manifest ───────────────────────────────────────────────────────
 
 {
@@ -454,6 +474,23 @@ const OV = { applied: true, mechanism: 'github_label' as const, label: 'prodgate
   check('iam policy known non-wildcard: no finding', r.findings.length === 0)
 }
 
+// A world-open CIDR whose port or protocol is computed cannot be asserted critical:
+// Prodgate does not know which port ends up exposed.
+{
+  const sgRule = (after: any, afterUnknown: any) =>
+    classifyPlan(plan1('aws_security_group_rule', 'r', { actions: ['create'], before: null, after: { type: 'ingress', cidr_blocks: ['0.0.0.0/0'], ...after }, after_unknown: afterUnknown }))
+  const unknownPorts = sgRule({ from_port: null, to_port: null, protocol: 'tcp' }, { from_port: true, to_port: true })
+  check('sg world-open with unknown ports: needs review, not critical', hasUnknownWarning(unknownPorts) && unknownPorts.stats.criticalCount === 0)
+  const unknownProto = sgRule({ from_port: 22, to_port: 22, protocol: null }, { protocol: true })
+  check('sg world-open with unknown protocol: needs review, not critical', hasUnknownWarning(unknownProto) && unknownProto.stats.criticalCount === 0)
+  const known22 = sgRule({ from_port: 22, to_port: 22, protocol: 'tcp' }, {})
+  check('sg world-open on known port 22: critical', known22.stats.criticalCount === 1)
+  const known8080 = sgRule({ from_port: 8080, to_port: 8080, protocol: 'tcp' }, {})
+  check('sg world-open on known port 8080: warning, not critical', known8080.stats.criticalCount === 0 && known8080.stats.warningCount === 1)
+  const unrelated = sgRule({ from_port: 8080, to_port: 8080, protocol: 'tcp' }, { description: true })
+  check('sg unrelated unknown field: no indeterminate finding', !hasUnknownWarning(unrelated))
+}
+
 // Nested and list-shaped unknowns inside the relevant subtree are detected.
 {
   const internal = { from_port: 443, to_port: 443, protocol: 'tcp', cidr_blocks: ['10.0.0.0/8'] }
@@ -486,6 +523,21 @@ throwsCode('resource_changes wrong type rejected', () => parsePlan('{"resource_c
 throwsCode('missing actions rejected', () => parsePlan('{"resource_changes":[{"address":"a.b","type":"a","name":"b","change":{}}]}'), 'INVALID_RESOURCE_CHANGE')
 throwsCode('unknown action rejected', () => parsePlan('{"resource_changes":[{"address":"a.b","type":"a","name":"b","change":{"actions":["frobnicate"]}}]}'), 'UNSUPPORTED_ACTION')
 throwsCode('unsupported format_version rejected', () => parsePlan('{"format_version":"99.0","resource_changes":[]}'), 'UNSUPPORTED_FORMAT')
+throwsCode('errored plan rejected', () => parsePlan('{"format_version":"1.2","errored":true,"resource_changes":[]}'), 'PLAN_ERRORED')
+throwsCode('non-boolean errored rejected', () => parsePlan('{"format_version":"1.2","errored":"yes","resource_changes":[]}'), 'UNSUPPORTED_FORMAT')
+throwsCode('unknown resource mode rejected', () => parsePlan('{"format_version":"1.2","resource_changes":[{"address":"a.b","type":"a","name":"b","mode":"bogus","change":{"actions":["create"],"after":{}}}]}'), 'INVALID_RESOURCE_CHANGE')
+throwsCode('missing resource mode rejected', () => parsePlan('{"format_version":"1.2","resource_changes":[{"address":"a.b","type":"a","name":"b","change":{"actions":["create"],"after":{}}}]}'), 'INVALID_RESOURCE_CHANGE')
+throwsCode('create without after rejected', () => parsePlan('{"format_version":"1.2","resource_changes":[{"address":"a.b","type":"a","name":"b","mode":"managed","change":{"actions":["create"],"before":null,"after":null}}]}'), 'INVALID_RESOURCE_CHANGE')
+throwsCode('delete without before rejected', () => parsePlan('{"format_version":"1.2","resource_changes":[{"address":"a.b","type":"a","name":"b","mode":"managed","change":{"actions":["delete"],"before":null,"after":null}}]}'), 'INVALID_RESOURCE_CHANGE')
+throwsCode('update without both states rejected', () => parsePlan('{"format_version":"1.2","resource_changes":[{"address":"a.b","type":"a","name":"b","mode":"managed","change":{"actions":["update"],"before":{},"after":null}}]}'), 'INVALID_RESOURCE_CHANGE')
+throwsCode('non-object after_unknown rejected', () => parsePlan('{"format_version":"1.2","resource_changes":[{"address":"a.b","type":"a","name":"b","mode":"managed","change":{"actions":["create"],"after":{},"after_unknown":"nope"}}]}'), 'INVALID_RESOURCE_CHANGE')
+
+// A parse failure must not echo the offending input, which can hold a secret.
+{
+  let msg = ''
+  try { parsePlan('SUPER_SECRET_SENTINEL not json') } catch (e: any) { msg = String(e.message) }
+  check('parse error does not leak plan contents', msg.length > 0 && !msg.includes('SUPER_SECRET_SENTINEL'))
+}
 throwsCode('malformed data source rejected', () => parsePlan('{"format_version":"1.2","resource_changes":[{"mode":"data","address":"data.x.y"}]}'), 'INVALID_RESOURCE_CHANGE')
 throwsCode('missing identity rejected', () => parsePlan('{"format_version":"1.2","resource_changes":[{"change":{"actions":["delete"]}}]}'), 'INVALID_RESOURCE_CHANGE')
 throwsCode('impossible action combo rejected', () => parsePlan('{"format_version":"1.2","resource_changes":[{"address":"a.b","type":"a","name":"b","change":{"actions":["create","update"]}}]}'), 'UNSUPPORTED_ACTION')

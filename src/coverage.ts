@@ -75,7 +75,7 @@ export function buildCoverage(): Coverage {
   }
 
   for (const rule of DANGEROUS_MUTATIONS) {
-    const types = rule.meta.resourceTypes === 'all' ? ['(all resource types)'] : rule.meta.resourceTypes
+    const types = typeof rule.meta.resourceTypes === 'string' ? ['(all aws_ resource types)'] : rule.meta.resourceTypes
     for (const type of types) {
       entries.push({
         provider: 'aws',

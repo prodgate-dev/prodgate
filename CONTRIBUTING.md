@@ -30,8 +30,16 @@ Deleting or replacing one of these is treated as data loss (CRITICAL, in any
 environment). Add a line to `STATEFUL_RESOURCES` with a category:
 
 ```ts
-aws_dynamodb_table: { category: 'database' },
+aws_dynamodb_table: {
+  category: 'database',
+  defaultSeverity: 'CRITICAL',
+  rationale: 'the table holds its items',
+},
 ```
+
+The rationale is a short phrase. It is composed into a sentence that already says the
+change may cause data loss and that recovery depends on backups, so write only the
+resource-specific part.
 
 ## Add a disruptive-replace resource type
 
@@ -54,19 +62,49 @@ public or a security group opened to the world. A rule is an object in the
 
 ```ts
 {
-  id: 'my-rule',
+  id: 'PG-AWS-MY-RULE',
+  meta: {
+    category: 'exposure',
+    defaultSeverity: 'CRITICAL',
+    possibleSeverities: ['CRITICAL', 'WARNING'],
+    severityCondition: 'warning when the resulting value is unknown at plan time',
+    actions: ['create', 'update', 'replace'],
+    resourceTypes: ['aws_db_instance'],
+    evidenceFields: ['after.publicly_accessible'],
+    rationale: 'Making a database publicly accessible exposes it to the internet.',
+    limitations: ['Cannot confirm the resulting value when it is computed at plan time.'],
+  },
   appliesTo: (type) => type === 'aws_db_instance',
-  evaluate: (before, after) =>
-    after?.publicly_accessible === true && before?.publicly_accessible !== true
-      ? { severity: 'CRITICAL', summary: 'makes a database publicly accessible', attribute: 'publicly_accessible' }
-      : null,
+  evaluate: (before, after, afterUnknown) => {
+    if (after?.publicly_accessible === true && before?.publicly_accessible !== true) {
+      return {
+        severity: 'CRITICAL',
+        category: 'exposure',
+        confidence: 'high',
+        summary: 'makes a database publicly accessible',
+        attribute: 'publicly_accessible',
+        evidence: [{ field: 'after.publicly_accessible', observed: 'true' }],
+      }
+    }
+    return null
+  },
 }
 ```
 
+- `id` is stable and never reassigned to different semantics.
+- `meta` is what `prodgate coverage` publishes, and `meta.actions` also gates
+  execution, so list only the change kinds the rule can actually fire on. A rule that
+  needs a prior state, such as one detecting a protection being turned off, must not
+  list `create`.
+- `meta.rationale` says why Prodgate flags it; `meta.limitations` say what Prodgate
+  cannot determine from a plan.
 - `appliesTo(type)` returns true for the resource types the rule looks at.
-- `evaluate(before, after)` returns a match, or `null` when the rule does not apply.
-- The rule runs on creates and replaces as well as updates, so `before` can be null.
-  Check for that, and only fire when the resulting state is actually risky.
+- `evaluate(before, after, afterUnknown)` returns a match, or `null`. On a create
+  `before` is null, so check for that and only fire when the resulting state is risky.
+- If the rule depends on a field that is computed at plan time, do not assume it is
+  safe. Use the shared `indeterminate(...)` helper to report it for review.
+- `evidence` names the plan facts that produced the finding, using normalized tokens
+  rather than raw values.
 - Use CRITICAL for something that loses or exposes data, WARNING for something worth
   a look that should not block on its own.
 

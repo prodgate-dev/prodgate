@@ -243,7 +243,8 @@ These are standard for any CI-side policy check (OPA, Checkov, and others share 
 
 | Surface | Coverage |
 |---------|----------|
-| Terraform / OpenTofu plan JSON | Supported |
+| Terraform plan JSON | Supported and tested against real `terraform show -json` output |
+| OpenTofu plan JSON | Expected to work (same plan format) and undergoing validation; no OpenTofu-generated plan is in the test corpus yet |
 | AWS resources | Supported (stateful resources, public DB, S3 public access, security groups, IAM, deletion protection) |
 | GCP / Azure | Planned |
 | Pulumi / CDK / CloudFormation | Not supported |

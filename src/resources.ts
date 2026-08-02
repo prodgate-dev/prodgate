@@ -108,7 +108,7 @@ export type RuleMeta = {
   possibleSeverities: Severity[]
   severityCondition?: string
   actions: TfActionKind[]
-  resourceTypes: string[] | 'all'
+  resourceTypes: string[] | 'all aws_ types'
   evidenceFields: string[]
   rationale: string
   limitations: string[]
@@ -162,14 +162,34 @@ function portRange(ing: any): { from: number; to: number } {
   const to = Number(ing?.to_port ?? 65535)
   return { from: isNaN(from) ? 0 : from, to: isNaN(to) ? 65535 : to }
 }
-type WorldOpenRange = { from: number; to: number; cidr: WorldCidr }
-function openWorldRanges(v: any): WorldOpenRange[] {
+type WorldOpenRange = { from: number; to: number; cidr: WorldCidr; portUnknown?: boolean }
+// The port and protocol fields that decide which ports a world-open rule exposes. If
+// any is computed at plan time, the effective port range is not knowable.
+const SG_PORT_KEYS = ['from_port', 'to_port', 'protocol', 'ip_protocol']
+function portInfoUnknown(unknownNode: any): boolean {
+  if (!unknownNode || typeof unknownNode !== 'object') return false
+  return SG_PORT_KEYS.some(k => hasUnknownWithin(unknownNode[k]))
+}
+// Line up the after_unknown mirror with the ingress list so each world-open rule can
+// be asked whether its own port information is computed.
+function unknownForIngress(afterUnknown: any, index: number, single: boolean): any {
+  if (!afterUnknown || typeof afterUnknown !== 'object') return undefined
+  if (single) return afterUnknown
+  const ing = afterUnknown.ingress
+  if (Array.isArray(ing)) return ing[index]
+  return undefined
+}
+function openWorldRanges(v: any, afterUnknown?: any): WorldOpenRange[] {
   const out: WorldOpenRange[] = []
-  for (const ing of ingressList(v)) {
+  const list = ingressList(v)
+  const single = !(v && Array.isArray(v.ingress))
+  for (let i = 0; i < list.length; i++) {
+    const ing = list[i]
     const cidrs = worldOpenCidrs(ing)
     if (cidrs.length === 0) continue
     const r = portRange(ing)
-    for (const cidr of cidrs) out.push({ from: r.from, to: r.to, cidr })
+    const portUnknown = portInfoUnknown(unknownForIngress(afterUnknown, i, single))
+    for (const cidr of cidrs) out.push({ from: r.from, to: r.to, cidr, portUnknown })
   }
   return out
 }
@@ -249,12 +269,15 @@ export const DANGEROUS_MUTATIONS: DangerousRule[] = [
       possibleSeverities: ['CRITICAL', 'WARNING'],
       severityCondition: 'warning when the resulting value is unknown at plan time',
       actions: ['update', 'replace'],
-      resourceTypes: 'all',
+      resourceTypes: 'all aws_ types',
       evidenceFields: ['before.deletion_protection', 'after.deletion_protection'],
       rationale: 'Turning off deletion protection removes the guard that prevents accidental destruction.',
-      limitations: ['Evaluated only when the before state already had deletion protection enabled.'],
+      limitations: [
+        'Evaluated only when the before state already had deletion protection enabled.',
+        'Applies to AWS resource types only, matching the advertised provider coverage.',
+      ],
     },
-    appliesTo: () => true,
+    appliesTo: (t) => t.startsWith('aws_'),
     evaluate: (b, a, au) => {
       if (!b) return null
       const wasOn = b.deletion_protection === true || b.deletion_protection_enabled === true
@@ -348,13 +371,19 @@ export const DANGEROUS_MUTATIONS: DangerousRule[] = [
     appliesTo: (t) =>
       t === 'aws_security_group' || t === 'aws_security_group_rule' || t === 'aws_vpc_security_group_ingress_rule',
     evaluate: (b, a, au) => {
-      const after = openWorldRanges(a)
+      const after = openWorldRanges(a, au)
       if (after.length > 0) {
         const before = openWorldRanges(b)
         const newly = after.filter(r => !before.some(q => q.from === r.from && q.to === r.to && q.cidr === r.cidr))
         if (newly.length > 0) {
-          const sensitive = newly.some(coversSensitive)
-          const cidrs = [...new Set(newly.map(r => r.cidr))].join(' and ')
+          // The CIDR is known to be world-open, but the port or protocol is computed,
+          // so which ports end up exposed cannot be asserted either way.
+          if (newly.every(r => r.portUnknown)) {
+            return indeterminate('ingress', 'security group port or protocol')
+          }
+          const decidable = newly.filter(r => !r.portUnknown)
+          const sensitive = decidable.some(coversSensitive)
+          const cidrs = [...new Set(decidable.map(r => r.cidr))].join(' and ')
           return {
             severity: sensitive ? 'CRITICAL' : 'WARNING',
             category: 'exposure',

@@ -74,6 +74,29 @@ check('missing named config exits 2', run(['check', fixture('create-only.json'),
 check('valid config exits 0', run(['check', fixture('create-only.json'), '--config', writeTmp('{"schemaVersion":1,"mode":"enforce","ignore":["module.x.*"]}')]).code === 0)
 check('invalid --mode exits 2', run(['check', fixture('delete-db.json'), '--mode', 'bogus']).code === 2)
 
+// Usage errors are tool errors, not policy blocks, so they must not share exit 1.
+check('missing argument exits 2', run(['check']).code === 2)
+check('unknown option exits 2', run(['check', fixture('create-only.json'), '--bad-option']).code === 2)
+check('invalid --fail-on exits 2', run(['check', fixture('create-only.json'), '--fail-on', 'sometimes']).code === 2)
+check('--help exits 0', run(['--help']).code === 0)
+check('--version exits 0', run(['--version']).code === 0)
+check('invalid --mode with --json returns a structured error', (() => {
+  const r = run(['check', fixture('create-only.json'), '--json', '--mode', 'invalid'])
+  try { return r.code === 2 && JSON.parse(r.stdout).error.code === 'INVALID_OPTION' } catch { return false }
+})())
+
+// A malformed plan must never echo its contents into logs or JSON output.
+{
+  const secret = writeTmp('SUPER_SECRET_SENTINEL not json')
+  const human = run(['check', secret])
+  const json = run(['check', secret, '--json'])
+  const leaked = (human.stdout + human.stderr + json.stdout + json.stderr).includes('SUPER_SECRET_SENTINEL')
+  check('parse errors do not leak plan contents', human.code === 2 && json.code === 2 && !leaked)
+}
+
+// A plan that failed to generate must not evaluate as a clean no-change plan.
+check('errored plan exits 2', run(['check', writeTmp('{"format_version":"1.2","errored":true,"resource_changes":[]}')]).code === 2)
+
 // Output modes.
 check('json envelope separates policy verdict from mode', (() => {
   const r = run(['check', fixture('delete-db.json'), '--json'])

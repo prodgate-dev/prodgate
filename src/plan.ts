@@ -60,6 +60,7 @@ export type PlanInputErrorCode =
   | 'UNSUPPORTED_FORMAT'
   | 'INVALID_RESOURCE_CHANGE'
   | 'UNSUPPORTED_ACTION'
+  | 'PLAN_ERRORED'
 
 // Thrown when the input is not a recognizable Terraform plan. The gate must fail
 // closed on this rather than treat an unrecognized document as a plan with no
@@ -102,6 +103,16 @@ function validatePlanDoc(doc: any): void {
       throw new PlanInputError('UNSUPPORTED_FORMAT', `Unsupported plan format_version "${doc.format_version}". Prodgate supports format 0.x and 1.x.`)
     }
   }
+  // A plan that failed to generate cannot be applied, so it must never be evaluated
+  // as though it were a clean no-change plan.
+  if ('errored' in doc) {
+    if (typeof doc.errored !== 'boolean') {
+      throw new PlanInputError('UNSUPPORTED_FORMAT', '`errored` must be a boolean.')
+    }
+    if (doc.errored === true) {
+      throw new PlanInputError('PLAN_ERRORED', 'This plan reports `errored: true`, so planning failed and it cannot be applied. Fix the plan and regenerate it.')
+    }
+  }
   const hasResourceChanges = 'resource_changes' in doc
   const looksLikePlan = hasResourceChanges || 'planned_values' in doc || 'configuration' in doc
   if (!looksLikePlan) {
@@ -113,6 +124,10 @@ function validatePlanDoc(doc: any): void {
   if (hasResourceChanges && !Array.isArray(doc.resource_changes)) {
     throw new PlanInputError('INVALID_RESOURCE_CHANGE', '`resource_changes` must be an array.')
   }
+}
+
+function isPlainObject(v: any): boolean {
+  return v !== null && typeof v === 'object' && !Array.isArray(v)
 }
 
 export type ParsedPlan = {
@@ -137,7 +152,11 @@ export function parsePlanFull(json: string): ParsedPlan {
     const text = json.charCodeAt(0) === 0xfeff ? json.slice(1) : json
     doc = JSON.parse(text)
   } catch (e) {
-    throw new PlanInputError('INVALID_JSON', 'Could not parse plan JSON: ' + (e as Error).message)
+    // The parser's message can quote the offending input, and a malformed plan may
+    // hold a password or token near the failure, so report only a position.
+    const pos = /position (\d+)/.exec((e as Error).message)?.[1]
+    const where = pos ? ` (at character ${pos})` : ''
+    throw new PlanInputError('INVALID_JSON', `Could not parse plan JSON${where}. Confirm that the file was produced by \`terraform show -json\`.`)
   }
 
   validatePlanDoc(doc)
@@ -175,11 +194,30 @@ export function parsePlanFull(json: string): ParsedPlan {
     if (typeof rc.name !== 'string' || rc.name.length === 0) {
       throw new PlanInputError('INVALID_RESOURCE_CHANGE', 'Missing `name`.', at + '.name')
     }
+    // mode is required and has exactly two valid values. An unknown mode must not be
+    // silently skipped, or a malformed entry would quietly disappear from the gate.
+    if (rc.mode !== 'managed' && rc.mode !== 'data') {
+      throw new PlanInputError('INVALID_RESOURCE_CHANGE', 'Missing or invalid `mode` (expected "managed" or "data").', at + '.mode')
+    }
+    if (change.after_unknown !== undefined && change.after_unknown !== null && !isPlainObject(change.after_unknown)) {
+      throw new PlanInputError('INVALID_RESOURCE_CHANGE', '`change.after_unknown` must be an object.', at + '.change.after_unknown')
+    }
 
-    // Data sources and non-managed resources are validated above but not classified.
-    if (rc.mode && rc.mode !== 'managed') continue
+    // Data sources are validated above but not classified.
+    if (rc.mode !== 'managed') continue
 
     const actions = change.actions as TfAction[]
+    // A managed change must carry the states its action implies, so a create with no
+    // resulting state or a delete with no prior state cannot pass as evaluable.
+    const kind = deriveChangeKind(actions)
+    const needsBefore = kind === 'delete' || kind === 'update' || kind === 'replace'
+    const needsAfter = kind === 'create' || kind === 'update' || kind === 'replace'
+    if (needsBefore && !isPlainObject(change.before)) {
+      throw new PlanInputError('INVALID_RESOURCE_CHANGE', `A ${kind} requires a \`change.before\` object.`, at + '.change.before')
+    }
+    if (needsAfter && !isPlainObject(change.after)) {
+      throw new PlanInputError('INVALID_RESOURCE_CHANGE', `A ${kind} requires a \`change.after\` object.`, at + '.change.after')
+    }
 
     out.push({
       address: rc.address,
