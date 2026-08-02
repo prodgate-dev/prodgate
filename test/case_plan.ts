@@ -287,6 +287,12 @@ console.log('─'.repeat(50))
   check('golden unknown-sg-cidr: computed ingress flagged for review, passes', r.verdict === 'pass' && r.findings.some(f => f.ruleId === 'PG-AWS-SG-WORLD-OPEN' && /unknown/i.test(f.summary)))
 }
 
+{
+  // A real deferred data-source read is validated but not classified.
+  const r = classifyPlan(golden('data-source-read.tfplan.json'))
+  check('golden data-source-read: read is validated and not classified', r.stats.resourcesScanned === 1 && r.findings.every(f => !f.resource.address.startsWith('data.')))
+}
+
 // The golden plans must not carry real secrets or identifiers.
 {
   const dir = path.join(__dirname, 'fixtures', 'golden')
@@ -491,6 +497,27 @@ const OV = { applied: true, mechanism: 'github_label' as const, label: 'prodgate
   check('sg unrelated unknown field: no indeterminate finding', !hasUnknownWarning(unrelated))
 }
 
+// A group holding both a decidable world-open rule and one with a computed port must
+// not lose the indeterminate signal.
+{
+  const mixed = (knownPort: number) => classifyPlan(plan1('aws_security_group', 'sg', {
+    actions: ['create'],
+    before: null,
+    after: {
+      ingress: [
+        { from_port: knownPort, to_port: knownPort, protocol: 'tcp', cidr_blocks: ['0.0.0.0/0'] },
+        { from_port: null, to_port: null, protocol: 'tcp', cidr_blocks: ['0.0.0.0/0'] },
+      ],
+    },
+    after_unknown: { ingress: [{}, { from_port: true, to_port: true }] },
+  }))
+  const r8080 = mixed(8080)
+  check('sg mixed known 8080 + unknown port: needs review', hasUnknownWarning(r8080) && r8080.stats.criticalCount === 0)
+  const r22 = mixed(22)
+  const f22 = r22.findings.find(f => f.ruleId === 'PG-AWS-SG-WORLD-OPEN')
+  check('sg mixed known 22 + unknown port: critical with unknown context', r22.stats.criticalCount === 1 && !!f22 && f22.evidence.some(e => /unknown/.test(e.observed)))
+}
+
 // Nested and list-shaped unknowns inside the relevant subtree are detected.
 {
   const internal = { from_port: 443, to_port: 443, protocol: 'tcp', cidr_blocks: ['10.0.0.0/8'] }
@@ -515,13 +542,20 @@ const OV = { applied: true, mechanism: 'github_label' as const, label: 'prodgate
 
 // ── plan input validation (fail closed) ────────────────────────────────────
 
-throwsCode('empty object rejected', () => parsePlan('{}'), 'UNRECOGNIZED_DOCUMENT')
+throwsCode('empty object rejected', () => parsePlan('{}'), 'UNSUPPORTED_FORMAT')
+throwsCode('missing format_version rejected', () => parsePlan('{"resource_changes":[]}'), 'UNSUPPORTED_FORMAT')
+throwsCode('plan-shaped document without format_version rejected', () => parsePlan('{"configuration":{"root_module":{}}}'), 'UNSUPPORTED_FORMAT')
 throwsCode('top-level array rejected', () => parsePlan('[]'), 'UNRECOGNIZED_DOCUMENT')
 throwsCode('state file rejected', () => parsePlan('{"format_version":"1.0","values":{"root_module":{}}}'), 'UNRECOGNIZED_DOCUMENT')
 throwsCode('truncated json rejected', () => parsePlan('{"resource_changes":['), 'INVALID_JSON')
-throwsCode('resource_changes wrong type rejected', () => parsePlan('{"resource_changes":"wrong"}'), 'INVALID_RESOURCE_CHANGE')
-throwsCode('missing actions rejected', () => parsePlan('{"resource_changes":[{"address":"a.b","type":"a","name":"b","change":{}}]}'), 'INVALID_RESOURCE_CHANGE')
-throwsCode('unknown action rejected', () => parsePlan('{"resource_changes":[{"address":"a.b","type":"a","name":"b","change":{"actions":["frobnicate"]}}]}'), 'UNSUPPORTED_ACTION')
+throwsCode('resource_changes wrong type rejected', () => parsePlan('{"format_version":"1.2","resource_changes":"wrong"}'), 'INVALID_RESOURCE_CHANGE')
+throwsCode('missing actions rejected', () => parsePlan('{"format_version":"1.2","resource_changes":[{"address":"a.b","type":"a","name":"b","mode":"managed","change":{}}]}'), 'INVALID_RESOURCE_CHANGE')
+throwsCode('unknown action rejected', () => parsePlan('{"format_version":"1.2","resource_changes":[{"address":"a.b","type":"a","name":"b","mode":"managed","change":{"actions":["frobnicate"]}}]}'), 'UNSUPPORTED_ACTION')
+throwsCode('managed read rejected', () => parsePlan('{"format_version":"1.2","resource_changes":[{"address":"a.b","type":"a","name":"b","mode":"managed","change":{"actions":["read"],"before":null,"after":null}}]}'), 'UNSUPPORTED_ACTION')
+throwsCode('data create rejected', () => parsePlan('{"format_version":"1.2","resource_changes":[{"address":"data.a.b","type":"a","name":"b","mode":"data","change":{"actions":["create"],"before":null,"after":{}}}]}'), 'UNSUPPORTED_ACTION')
+throwsCode('managed no-op without states rejected', () => parsePlan('{"format_version":"1.2","resource_changes":[{"address":"a.b","type":"a","name":"b","mode":"managed","change":{"actions":["no-op"],"before":null,"after":null}}]}'), 'INVALID_RESOURCE_CHANGE')
+throwsCode('create with a before state rejected', () => parsePlan('{"format_version":"1.2","resource_changes":[{"address":"a.b","type":"a","name":"b","mode":"managed","change":{"actions":["create"],"before":{"x":1},"after":{}}}]}'), 'INVALID_RESOURCE_CHANGE')
+throwsCode('delete with an after state rejected', () => parsePlan('{"format_version":"1.2","resource_changes":[{"address":"a.b","type":"a","name":"b","mode":"managed","change":{"actions":["delete"],"before":{"x":1},"after":{"x":1}}}]}'), 'INVALID_RESOURCE_CHANGE')
 throwsCode('unsupported format_version rejected', () => parsePlan('{"format_version":"99.0","resource_changes":[]}'), 'UNSUPPORTED_FORMAT')
 throwsCode('errored plan rejected', () => parsePlan('{"format_version":"1.2","errored":true,"resource_changes":[]}'), 'PLAN_ERRORED')
 throwsCode('non-boolean errored rejected', () => parsePlan('{"format_version":"1.2","errored":"yes","resource_changes":[]}'), 'UNSUPPORTED_FORMAT')
@@ -540,7 +574,7 @@ throwsCode('non-object after_unknown rejected', () => parsePlan('{"format_versio
 }
 throwsCode('malformed data source rejected', () => parsePlan('{"format_version":"1.2","resource_changes":[{"mode":"data","address":"data.x.y"}]}'), 'INVALID_RESOURCE_CHANGE')
 throwsCode('missing identity rejected', () => parsePlan('{"format_version":"1.2","resource_changes":[{"change":{"actions":["delete"]}}]}'), 'INVALID_RESOURCE_CHANGE')
-throwsCode('impossible action combo rejected', () => parsePlan('{"format_version":"1.2","resource_changes":[{"address":"a.b","type":"a","name":"b","change":{"actions":["create","update"]}}]}'), 'UNSUPPORTED_ACTION')
+throwsCode('impossible action combo rejected', () => parsePlan('{"format_version":"1.2","resource_changes":[{"address":"a.b","type":"a","name":"b","mode":"managed","change":{"actions":["create","update"]}}]}'), 'UNSUPPORTED_ACTION')
 
 // A valid plan with an empty resource_changes array is a real no-change plan.
 {

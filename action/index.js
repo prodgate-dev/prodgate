@@ -1119,9 +1119,13 @@ exports.PlanInputError = PlanInputError;
 // The exact action sequences Terraform emits. Anything else (an unknown verb, an
 // impossible combination like create+update, or an empty array) is rejected rather
 // than guessed at.
-const ALLOWED_ACTION_SEQUENCES = new Set([
-    'no-op', 'create', 'read', 'update', 'delete', 'delete,create', 'create,delete',
+// Action sequences Terraform emits, split by resource mode. A managed resource is
+// never read, and a data source is only read (or unchanged), so pairing the two
+// catches documents that are shaped like a plan but cannot have come from one.
+const MANAGED_ACTION_SEQUENCES = new Set([
+    'no-op', 'create', 'update', 'delete', 'delete,create', 'create,delete',
 ]);
+const DATA_ACTION_SEQUENCES = new Set(['read', 'no-op']);
 const SUPPORTED_FORMAT_MAJORS = new Set(['0', '1']);
 // Enough structural validation to prove the intended artifact reached the gate,
 // without reproducing Terraform's whole schema. Distinguishes a valid plan (with or
@@ -1133,14 +1137,14 @@ function validatePlanDoc(doc) {
     if (doc.terraform_version != null && typeof doc.terraform_version !== 'string') {
         throw new PlanInputError('UNSUPPORTED_FORMAT', '`terraform_version` must be a string.');
     }
-    if (doc.format_version != null) {
-        if (typeof doc.format_version !== 'string') {
-            throw new PlanInputError('UNSUPPORTED_FORMAT', '`format_version` must be a string.');
-        }
-        const major = doc.format_version.split('.')[0];
-        if (!SUPPORTED_FORMAT_MAJORS.has(major)) {
-            throw new PlanInputError('UNSUPPORTED_FORMAT', `Unsupported plan format_version "${doc.format_version}". Prodgate supports format 0.x and 1.x.`);
-        }
+    // Every plan Terraform emits carries format_version. Requiring it keeps a JSON
+    // document that merely looks plan-shaped from being evaluated as one.
+    if (typeof doc.format_version !== 'string' || doc.format_version.length === 0) {
+        throw new PlanInputError('UNSUPPORTED_FORMAT', 'Missing `format_version`. Provide the output of `terraform show -json <planfile>`.');
+    }
+    const major = doc.format_version.split('.')[0];
+    if (!SUPPORTED_FORMAT_MAJORS.has(major)) {
+        throw new PlanInputError('UNSUPPORTED_FORMAT', `Unsupported plan format_version "${doc.format_version}". Prodgate supports format 0.x and 1.x.`);
     }
     // A plan that failed to generate cannot be applied, so it must never be evaluated
     // as though it were a clean no-change plan.
@@ -1208,9 +1212,6 @@ function parsePlanFull(json) {
         if (!Array.isArray(change.actions)) {
             throw new PlanInputError('INVALID_RESOURCE_CHANGE', 'Missing or invalid `change.actions` array.', at + '.change.actions');
         }
-        if (!ALLOWED_ACTION_SEQUENCES.has(change.actions.join(','))) {
-            throw new PlanInputError('UNSUPPORTED_ACTION', `Unsupported action sequence [${change.actions.join(', ')}].`, at + '.change.actions');
-        }
         // Identity is required so a change can never classify as an unnamed resource.
         if (typeof rc.address !== 'string' || rc.address.length === 0) {
             throw new PlanInputError('INVALID_RESOURCE_CHANGE', 'Missing `address`.', at + '.address');
@@ -1229,20 +1230,36 @@ function parsePlanFull(json) {
         if (change.after_unknown !== undefined && change.after_unknown !== null && !isPlainObject(change.after_unknown)) {
             throw new PlanInputError('INVALID_RESOURCE_CHANGE', '`change.after_unknown` must be an object.', at + '.change.after_unknown');
         }
-        // Data sources are validated above but not classified.
+        // Actions are validated against the mode: a managed resource is never read, and a
+        // data source is only read or unchanged.
+        const sequence = change.actions.join(',');
+        const allowed = rc.mode === 'managed' ? MANAGED_ACTION_SEQUENCES : DATA_ACTION_SEQUENCES;
+        if (!allowed.has(sequence)) {
+            throw new PlanInputError('UNSUPPORTED_ACTION', `Unsupported action sequence [${change.actions.join(', ')}] for a ${rc.mode} resource.`, at + '.change.actions');
+        }
+        // Data sources are validated above but not classified. Their before/after shapes
+        // are left unconstrained: a deferred read carries an object `after` while an
+        // already-resolved one can carry nulls.
         if (rc.mode !== 'managed')
             continue;
         const actions = change.actions;
-        // A managed change must carry the states its action implies, so a create with no
-        // resulting state or a delete with no prior state cannot pass as evaluable.
+        // A managed change must carry exactly the states its action implies, so a create
+        // with no resulting state, or a delete that still reports one, cannot pass as
+        // evaluable.
         const kind = deriveChangeKind(actions);
-        const needsBefore = kind === 'delete' || kind === 'update' || kind === 'replace';
-        const needsAfter = kind === 'create' || kind === 'update' || kind === 'replace';
-        if (needsBefore && !isPlainObject(change.before)) {
+        const wantBefore = kind === 'delete' || kind === 'update' || kind === 'replace' || kind === 'noop';
+        const wantAfter = kind === 'create' || kind === 'update' || kind === 'replace' || kind === 'noop';
+        if (wantBefore && !isPlainObject(change.before)) {
             throw new PlanInputError('INVALID_RESOURCE_CHANGE', `A ${kind} requires a \`change.before\` object.`, at + '.change.before');
         }
-        if (needsAfter && !isPlainObject(change.after)) {
+        if (!wantBefore && change.before != null) {
+            throw new PlanInputError('INVALID_RESOURCE_CHANGE', `A ${kind} must not carry a \`change.before\` state.`, at + '.change.before');
+        }
+        if (wantAfter && !isPlainObject(change.after)) {
             throw new PlanInputError('INVALID_RESOURCE_CHANGE', `A ${kind} requires a \`change.after\` object.`, at + '.change.after');
+        }
+        if (!wantAfter && change.after != null) {
+            throw new PlanInputError('INVALID_RESOURCE_CHANGE', `A ${kind} must not carry a \`change.after\` state.`, at + '.change.after');
         }
         out.push({
             address: rc.address,
@@ -1701,21 +1718,36 @@ exports.DANGEROUS_MUTATIONS = [
                 const before = openWorldRanges(b);
                 const newly = after.filter(r => !before.some(q => q.from === r.from && q.to === r.to && q.cidr === r.cidr));
                 if (newly.length > 0) {
-                    // The CIDR is known to be world-open, but the port or protocol is computed,
-                    // so which ports end up exposed cannot be asserted either way.
-                    if (newly.every(r => r.portUnknown)) {
-                        return indeterminate('ingress', 'security group port or protocol');
-                    }
                     const decidable = newly.filter(r => !r.portUnknown);
+                    const anyUnknownPort = newly.some(r => r.portUnknown);
+                    // The CIDR is known to be world-open, but no decidable rule opens a
+                    // sensitive port and at least one rule's port is computed, so which ports
+                    // end up exposed cannot be asserted.
                     const sensitive = decidable.some(coversSensitive);
+                    if (!sensitive && anyUnknownPort) {
+                        const known = decidable.length > 0
+                            ? [{ field: 'ingress.cidr', observed: [...new Set(decidable.map(r => r.cidr))].join(' and ') }]
+                            : [];
+                        return {
+                            severity: 'WARNING',
+                            category: 'unknown',
+                            confidence: 'low',
+                            summary: 'resulting security group port or protocol is unknown at plan time; cannot confirm it is safe (needs review)',
+                            attribute: 'ingress',
+                            evidence: [...known, { field: 'ingress.port', observed: 'unknown' }],
+                        };
+                    }
                     const cidrs = [...new Set(decidable.map(r => r.cidr))].join(' and ');
+                    const unknownNote = anyUnknownPort ? [{ field: 'ingress.port', observed: 'unknown on another rule' }] : [];
                     return {
                         severity: sensitive ? 'CRITICAL' : 'WARNING',
                         category: 'exposure',
                         confidence: sensitive ? 'high' : 'medium',
-                        summary: sensitive ? `opens a sensitive port to ${cidrs}` : `opens a security group to ${cidrs}`,
+                        summary: sensitive
+                            ? `opens a sensitive port to ${cidrs}${anyUnknownPort ? ', and another rule has an unknown port' : ''}`
+                            : `opens a security group to ${cidrs}`,
                         attribute: 'ingress',
-                        evidence: [{ field: 'ingress.cidr', observed: sensitive ? `${cidrs} to a sensitive port` : cidrs }],
+                        evidence: [{ field: 'ingress.cidr', observed: sensitive ? `${cidrs} to a sensitive port` : cidrs }, ...unknownNote],
                     };
                 }
             }

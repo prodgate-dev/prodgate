@@ -17,10 +17,16 @@ It works out of the box with no rules to write, and it reads the plan as a file:
    terraform show -json plan.tfplan > plan.json
    npx prodgate check plan.json
    ```
-2. Add the Action to your pull-request workflow (see below).
-3. Run it in **audit mode** for a week (`mode: audit`): it reports what it would block without failing the build.
-4. Review the findings. If it is quiet and accurate, remove the `mode: audit` line to enforce.
-5. From then on, a critical finding fails the check until a reviewer adds the `prodgate-approved` label.
+2. Create the override label once, so the override flow works when you need it:
+   ```bash
+   gh label create prodgate-approved --description "Recorded manual Prodgate override" --color D93F0B
+   ```
+3. Add the Action to your pull-request workflow (see below).
+4. Run it in **audit mode** for a week (`mode: audit`): it reports what it would block without failing the build.
+5. Review the findings. If it is quiet and accurate, remove the `mode: audit` line to enforce.
+6. From then on, a critical finding fails the check until a reviewer adds the `prodgate-approved` label.
+
+Exit codes: `0` allowed or reported, `1` a policy block, `2` an input, configuration, or tool error. A `2` means Prodgate could not evaluate the plan, not that the plan is safe.
 
 ## Why
 
@@ -41,8 +47,7 @@ on:
 
 permissions:
   contents: read
-  pull-requests: write
-  issues: write
+  issues: write   # to post and update the PR comment and read the override label
 
 jobs:
   prodgate:
@@ -50,7 +55,8 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          fetch-depth: 0   # lets Prodgate see commit co-author trailers for agent detection
+          fetch-depth: 0            # lets Prodgate see commit co-author trailers for agent detection
+          persist-credentials: false # do not leave a usable git token in the workspace
 
       - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
 
@@ -73,6 +79,14 @@ jobs:
 ```
 
 On every PR, Prodgate posts a one-line plan summary (what the change adds, changes, replaces, and destroys), so the check is useful even when nothing is wrong. On a destructive or dangerous change, it fails the check and posts the detail. To let a flagged change through, add the **`prodgate-approved`** label to record a manual override (see below).
+
+**Workflow safety.** The example above is a starting point. Running `terraform plan` on a pull request executes code the PR author controls, including provider and module code, so treat that job as untrusted:
+
+- If you already have a trusted job that produces a plan, add Prodgate after it rather than planning again here.
+- Do not expose privileged cloud credentials to a job that plans PR-authored code. Use a read-only role scoped to planning, and prefer an environment with required reviewers for anything stronger.
+- Keep `persist-credentials: false` on checkout so a later step cannot reuse the git token.
+- Grant the smallest permissions that work. Prodgate needs `issues: write` for the comment and the override label, and nothing more.
+- For stronger separation, split it into two jobs: one that plans and uploads `plan.json` as an artifact with no write permissions, and one that downloads it and runs Prodgate with the commenting permission.
 
 **Audit-first rollout.** Prodgate enforces by default: a critical finding fails the check. On an existing or production repository, run it in audit mode for a week first by adding `mode: audit` to the step. In audit mode the check reports what it would have blocked but does not fail the build. When you are confident it is not noisy, remove that line to enable enforcement.
 

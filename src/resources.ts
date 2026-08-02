@@ -376,21 +376,36 @@ export const DANGEROUS_MUTATIONS: DangerousRule[] = [
         const before = openWorldRanges(b)
         const newly = after.filter(r => !before.some(q => q.from === r.from && q.to === r.to && q.cidr === r.cidr))
         if (newly.length > 0) {
-          // The CIDR is known to be world-open, but the port or protocol is computed,
-          // so which ports end up exposed cannot be asserted either way.
-          if (newly.every(r => r.portUnknown)) {
-            return indeterminate('ingress', 'security group port or protocol')
-          }
           const decidable = newly.filter(r => !r.portUnknown)
+          const anyUnknownPort = newly.some(r => r.portUnknown)
+          // The CIDR is known to be world-open, but no decidable rule opens a
+          // sensitive port and at least one rule's port is computed, so which ports
+          // end up exposed cannot be asserted.
           const sensitive = decidable.some(coversSensitive)
+          if (!sensitive && anyUnknownPort) {
+            const known = decidable.length > 0
+              ? [{ field: 'ingress.cidr', observed: [...new Set(decidable.map(r => r.cidr))].join(' and ') }]
+              : []
+            return {
+              severity: 'WARNING',
+              category: 'unknown',
+              confidence: 'low',
+              summary: 'resulting security group port or protocol is unknown at plan time; cannot confirm it is safe (needs review)',
+              attribute: 'ingress',
+              evidence: [...known, { field: 'ingress.port', observed: 'unknown' }],
+            }
+          }
           const cidrs = [...new Set(decidable.map(r => r.cidr))].join(' and ')
+          const unknownNote = anyUnknownPort ? [{ field: 'ingress.port', observed: 'unknown on another rule' }] : []
           return {
             severity: sensitive ? 'CRITICAL' : 'WARNING',
             category: 'exposure',
             confidence: sensitive ? 'high' : 'medium',
-            summary: sensitive ? `opens a sensitive port to ${cidrs}` : `opens a security group to ${cidrs}`,
+            summary: sensitive
+              ? `opens a sensitive port to ${cidrs}${anyUnknownPort ? ', and another rule has an unknown port' : ''}`
+              : `opens a security group to ${cidrs}`,
             attribute: 'ingress',
-            evidence: [{ field: 'ingress.cidr', observed: sensitive ? `${cidrs} to a sensitive port` : cidrs }],
+            evidence: [{ field: 'ingress.cidr', observed: sensitive ? `${cidrs} to a sensitive port` : cidrs }, ...unknownNote],
           }
         }
       }

@@ -63,7 +63,7 @@ check('empty object plan exits 2', run(['check', writeTmp('{}')]).code === 2)
 check('state-shaped input exits 2', run(['check', writeTmp('{"format_version":"1.0","values":{}}')]).code === 2)
 check('json error carries a code', (() => {
   const r = run(['check', writeTmp('{}'), '--json'])
-  try { return r.code === 2 && JSON.parse(r.stdout).error.code === 'UNRECOGNIZED_DOCUMENT' } catch { return false }
+  try { return r.code === 2 && JSON.parse(r.stdout).error.code === 'UNSUPPORTED_FORMAT' } catch { return false }
 })())
 
 // Config validation.
