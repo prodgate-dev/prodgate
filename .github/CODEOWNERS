@@ -1,0 +1,10 @@
+# Changes to the engine, the shipped Action, and the release path need owner review.
+* @prodgate-dev
+
+/action.yml @prodgate-dev
+/action/ @prodgate-dev
+/.github/workflows/ @prodgate-dev
+/scripts/ @prodgate-dev
+/src/ @prodgate-dev
+/package.json @prodgate-dev
+/package-lock.json @prodgate-dev
