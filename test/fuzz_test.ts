@@ -142,6 +142,57 @@ for (const text of MALFORMED) {
 }
 check('no malformed document is accepted', leaked === 0)
 
+// Explicit schema properties for the optional top-level sections. Random generation
+// alone cannot tell which shape is correct, so the expected type is asserted here.
+const OBJECT_SECTIONS = ['configuration', 'planned_values', 'prior_state', 'variables', 'output_changes']
+const ARRAY_SECTIONS = ['resource_drift', 'relevant_attributes', 'checks']
+const WRONG_FOR_OBJECT = ['null', '[]', '"s"', '5', 'true']
+const WRONG_FOR_ARRAY = ['null', '{}', '"s"', '5', 'true']
+
+function parses(body: string): boolean {
+  try {
+    parsePlanFull(body)
+    return true
+  } catch {
+    return false
+  }
+}
+
+let schemaFailures = 0
+for (const key of OBJECT_SECTIONS) {
+  if (!parses(`{"format_version":"1.2","resource_changes":[],"${key}":{}}`)) {
+    schemaFailures++
+    console.log(`    object section ${key} rejected a valid object`)
+  }
+  for (const wrong of WRONG_FOR_OBJECT) {
+    if (parses(`{"format_version":"1.2","resource_changes":[],"${key}":${wrong}}`)) {
+      schemaFailures++
+      console.log(`    object section ${key} accepted ${wrong}`)
+    }
+  }
+}
+for (const key of ARRAY_SECTIONS) {
+  if (!parses(`{"format_version":"1.2","resource_changes":[],"${key}":[]}`)) {
+    schemaFailures++
+    console.log(`    array section ${key} rejected a valid array`)
+  }
+  for (const wrong of WRONG_FOR_ARRAY) {
+    if (parses(`{"format_version":"1.2","resource_changes":[],"${key}":${wrong}}`)) {
+      schemaFailures++
+      console.log(`    array section ${key} accepted ${wrong}`)
+    }
+  }
+}
+check('optional sections accept their type and reject every other shape', schemaFailures === 0)
+
+// A plan carrying every optional section, each well formed, must parse.
+{
+  const full = '{"format_version":"1.2","terraform_version":"1.9.8","resource_changes":[],'
+    + OBJECT_SECTIONS.map(k => `"${k}":{}`).join(',') + ','
+    + ARRAY_SECTIONS.map(k => `"${k}":[]`).join(',') + '}'
+  check('a plan with every optional section present parses', parses(full))
+}
+
 console.log('\n' + '─'.repeat(50))
 if (failures === 0) {
   console.log('All property tests passed')

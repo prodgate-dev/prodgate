@@ -20,7 +20,7 @@ import { parsePlanFull } from './plan'
 import { detectAgent, AgentMetadata } from './agent'
 import { classifyPlan, Config, EnforcementMode, FailOn, PlanResult } from './classify'
 import { POLICY_VERSION } from './resources'
-import { buildCoverage } from './coverage'
+import { buildCoverage, buildRuleSummaries } from './coverage'
 import { formatHuman, formatGithub } from './output'
 
 const ENGINE_VERSION: string = require('../package.json').version
@@ -190,28 +190,31 @@ program
   .option('--json', 'Output raw JSON')
   .action((ruleId: string, options) => {
     const wanted = ruleId.toUpperCase()
-    const entries = buildCoverage().entries.filter(e => e.ruleId.toUpperCase() === wanted)
-    if (entries.length === 0) {
-      const known = [...new Set(buildCoverage().entries.map(e => e.ruleId))].sort()
-      console.error(`Unknown rule "${ruleId}". Known rules: ${known.join(', ')}`)
+    const rules = buildRuleSummaries()
+    const rule = rules.find(r => r.ruleId.toUpperCase() === wanted)
+    if (!rule) {
+      console.error(`Unknown rule "${ruleId}". Known rules: ${rules.map(r => r.ruleId).join(', ')}`)
       process.exit(2)
     }
-    const e = entries[0]
     if (options.json) {
-      console.log(JSON.stringify({ ...e, resourceTypes: entries.map(x => x.resourceType) }, null, 2))
+      console.log(JSON.stringify(rule, null, 2))
       return
     }
-    console.log(`${e.ruleId}`)
+    console.log(`${rule.ruleId}`)
     console.log('')
-    console.log(`  Category:    ${e.category}`)
-    console.log(`  Severity:    ${e.defaultSeverity} by default (possible: ${e.possibleSeverities.join(', ')})`)
-    if (e.severityCondition) console.log(`               ${e.severityCondition}`)
-    console.log(`  Actions:     ${e.actions.join(', ')}`)
-    console.log(`  Applies to:  ${entries.map(x => x.resourceType).join(', ')}`)
-    if (e.evidenceFields.length) console.log(`  Evidence:    ${e.evidenceFields.join(', ')}`)
+    console.log(`  Category:    ${rule.category}`)
+    console.log(`  Severity:    ${rule.defaultSeverity} by default (possible: ${rule.possibleSeverities.join(', ')})`)
+    if (rule.severityCondition) console.log(`               ${rule.severityCondition}`)
+    console.log(`  Actions:     ${rule.actions.join(', ')}`)
+    if (rule.evidenceFields.length) console.log(`  Evidence:    ${rule.evidenceFields.join(', ')}`)
     console.log('')
-    console.log(`  Why: ${e.rationale}`)
-    for (const l of e.limitations) console.log(`  Limitation: ${l}`)
+    console.log(`  Why: ${rule.rationale}`)
+    for (const l of rule.limitations) console.log(`  Limitation: ${l}`)
+    if (rule.entries.length > 0) {
+      console.log('')
+      console.log(`  Applies to ${rule.entries.length} resource type(s):`)
+      for (const e of rule.entries) console.log(`    ${e.resourceType.padEnd(40)} ${e.rationale}`)
+    }
     console.log('')
   })
 
@@ -222,13 +225,18 @@ program
   .option('--config <file>', 'Path to prodgate.config.json')
   .action((planPath: string | undefined, options) => {
     const lines: string[] = []
-    let problems = 0
-    const ok = (label: string, detail: string) => lines.push(`  [ok]   ${label}: ${detail}`)
-    const bad = (label: string, detail: string) => { problems++; lines.push(`  [warn] ${label}: ${detail}`) }
+    // advisories do not stop an evaluation; blockers mean a named input is missing or
+    // unusable, so they exit 2 like any other input error.
+    let advisories = 0
+    let blockers = 0
+    const ok = (label: string, detail: string) => lines.push(`  [ok]    ${label}: ${detail}`)
+    const note = (detail: string) => lines.push(`  [note]  ${detail}`)
+    const warn = (label: string, detail: string) => { advisories++; lines.push(`  [warn]  ${label}: ${detail}`) }
+    const block = (label: string, detail: string) => { blockers++; lines.push(`  [error] ${label}: ${detail}`) }
 
     const major = Number(process.versions.node.split('.')[0])
     if (major >= 20) ok('Node', `${process.versions.node}`)
-    else bad('Node', `${process.versions.node} is below the supported minimum of 20`)
+    else block('Node', `${process.versions.node} is below the supported minimum of 20`)
 
     ok('Engine', `prodgate ${ENGINE_VERSION}`)
     ok('Policy', `${POLICY_VERSION}`)
@@ -238,34 +246,35 @@ program
       loadConfig(options.config) // exits 2 with a clear message when invalid
       ok('Config', `${configTarget} is valid`)
     } else if (options.config) {
-      bad('Config', `${configTarget} was named but does not exist`)
+      block('Config', `${configTarget} was named but does not exist`)
     } else {
       ok('Config', 'none found, using zero-config defaults')
     }
 
     if (process.env.GITHUB_ACTIONS === 'true') {
       ok('Environment', `GitHub Actions, repository ${process.env.GITHUB_REPOSITORY ?? 'unknown'}`)
-      if (!process.env.PRODGATE_COMMIT_SHA && !process.env.GITHUB_SHA) bad('Environment', 'no commit SHA available for the report')
+      if (!process.env.PRODGATE_COMMIT_SHA && !process.env.GITHUB_SHA) warn('Environment', 'no commit SHA available for the report')
     } else {
       ok('Environment', 'local run, no CI metadata')
     }
 
     if (planPath) {
       if (!fs.existsSync(planPath)) {
-        bad('Plan', `${planPath} does not exist`)
+        block('Plan', `${planPath} does not exist`)
       } else {
         try {
           const parsed = parsePlanFull(readTextFile(planPath))
           const managed = parsed.changes.length
           ok('Plan', `${planPath} parsed, format ${parsed.formatVersion ?? 'unknown'}, terraform ${parsed.terraformVersion ?? 'unknown'}`)
-          if (managed === 0) bad('Plan', 'no managed resource changes, so there is nothing for Prodgate to evaluate')
+          // A valid plan with nothing to evaluate is a normal state, not a problem.
+          if (managed === 0) note('The plan is valid and has no managed resource changes, so there is nothing to evaluate.')
           else ok('Plan', `${managed} managed resource change(s) to evaluate`)
         } catch (e) {
-          bad('Plan', (e as Error).message)
+          block('Plan', (e as Error).message)
         }
       }
     } else {
-      lines.push('  [note] pass a plan file to check that it is readable and has changes')
+      note('Pass a plan file to check that it is readable and has changes.')
     }
 
     console.log('')
@@ -273,7 +282,17 @@ program
     console.log('')
     for (const l of lines) console.log(l)
     console.log('')
-    console.log(problems === 0 ? 'No problems found.' : `${problems} thing(s) to look at.`)
+    if (blockers > 0) {
+      console.log(`${blockers} problem(s) would stop Prodgate from evaluating.`)
+      console.log('')
+      process.exit(2)
+    }
+    if (advisories > 0) {
+      console.log(`${advisories} advisory item(s). Evaluation is still possible.`)
+      console.log('')
+      process.exit(1)
+    }
+    console.log('No problems found.')
     console.log('')
   })
 
@@ -301,6 +320,19 @@ program
     const result = classifyPlan(parsed.changes, { mode, failOn, config, policyDigest: computePolicyDigest(mode, failOn, config) })
     const wanted = options.finding ? String(options.finding).toUpperCase() : undefined
     const findings = result.findings.filter(f => !wanted || f.ruleId.toUpperCase() === wanted)
+    // A filter that matches nothing is reported rather than returning an empty list,
+    // so a mistyped rule id is not mistaken for "the rule did not fire".
+    if (wanted && findings.length === 0) {
+      const known = buildRuleSummaries().some(r => r.ruleId.toUpperCase() === wanted)
+      const present = [...new Set(result.findings.map(f => f.ruleId))].sort()
+      console.error(known
+        ? `Rule ${options.finding} did not produce a finding for this plan.`
+        : `Unknown rule "${options.finding}".`)
+      console.error(present.length > 0
+        ? `Rules present in this plan: ${present.join(', ')}`
+        : 'This plan produced no findings.')
+      process.exit(2)
+    }
     // Only rule ids, resource types, actions, and normalized evidence tokens. No
     // addresses, names, tags, values, or anything else drawn from the plan.
     console.log(JSON.stringify({

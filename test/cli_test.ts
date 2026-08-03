@@ -244,16 +244,38 @@ check('explain --json returns the rule entry', (() => {
   try { return r.code === 0 && JSON.parse(r.stdout).ruleId === 'PG-AWS-SG-WORLD-OPEN' } catch { return false }
 })())
 check('explain on an unknown rule exits 2', run(['explain', 'PG-NOPE']).code === 2)
+// Every rule the classifier can emit must be explainable.
+check('explain covers the generic destruction rules', ['PG-DESTROY-STATEFUL', 'PG-DESTROY-STATEFUL-NONPROD', 'PG-DESTROY-PROD', 'PG-DESTROY-OTHER', 'PG-DISRUPTION-NOTE'].every(id => run(['explain', id]).code === 0))
+// A grouped rule must not borrow the first resource type's rationale.
+check('explain gives a grouped rule its own rationale and per-type detail', (() => {
+  const r = run(['explain', 'PG-DESTROY-STATEFUL'])
+  return r.code === 0 && !/Why:.*holds the database storage/.test(r.stdout) && /Applies to \d+ resource type/.test(r.stdout) && /aws_s3_bucket/.test(r.stdout)
+})())
+check('explain --json returns a rule with entries', (() => {
+  const r = run(['explain', 'PG-DESTROY-STATEFUL', '--json'])
+  try {
+    const o = JSON.parse(r.stdout)
+    return o.ruleId === 'PG-DESTROY-STATEFUL' && Array.isArray(o.entries) && o.entries.length > 5
+  } catch { return false }
+})())
 
-check('doctor reports a healthy setup', (() => {
+check('doctor reports a healthy setup and exits 0', (() => {
   const r = run(['doctor', fixture('delete-db.json')])
   return r.code === 0 && /Node/.test(r.stdout) && /No problems found/.test(r.stdout)
 })())
-check('doctor flags a plan with no managed changes', (() => {
+check('doctor with no plan argument exits 0', run(['doctor']).code === 0)
+// A valid plan with nothing to evaluate is a note, not a problem.
+check('doctor treats a valid no-change plan as a note and exits 0', (() => {
   const r = run(['doctor', fixture('golden/no-change.tfplan.json')])
-  return /nothing for Prodgate to evaluate/.test(r.stdout)
+  return r.code === 0 && /\[note\]/.test(r.stdout) && /nothing to evaluate/.test(r.stdout)
 })())
-check('doctor flags an unparsable plan', run(['doctor', writeTmp('{}')]).stdout.includes('[warn]'))
+// A named input that is missing or unusable is a blocker, so it exits 2.
+check('doctor exits 2 on a missing named plan', run(['doctor', path.join(os.tmpdir(), 'nope-doctor.json')]).code === 2)
+check('doctor exits 2 on an unparsable plan', (() => {
+  const r = run(['doctor', writeTmp('{}')])
+  return r.code === 2 && /\[error\]/.test(r.stdout)
+})())
+check('doctor exits 2 on a missing named config', run(['doctor', '--config', path.join(os.tmpdir(), 'nope-cfg.json')]).code === 2)
 
 check('diagnostics emits sanitized metadata only', (() => {
   const r = run(['diagnostics', fixture('golden/create-exposures.tfplan.json')])
@@ -273,6 +295,15 @@ check('diagnostics --finding filters to one rule', (() => {
   } catch { return false }
 })())
 check('diagnostics on a missing plan exits 2', run(['diagnostics', path.join(os.tmpdir(), 'nope-xyz.json')]).code === 2)
+// A filter that matches nothing must be reported, not returned as an empty list.
+check('diagnostics --finding with an unknown rule exits 2', (() => {
+  const r = run(['diagnostics', fixture('golden/create-exposures.tfplan.json'), '--finding', 'PG-NOPE'])
+  return r.code === 2 && /Unknown rule/.test(r.stderr)
+})())
+check('diagnostics --finding with a known but untriggered rule exits 2', (() => {
+  const r = run(['diagnostics', fixture('golden/create-exposures.tfplan.json'), '--finding', 'PG-DESTROY-STATEFUL'])
+  return r.code === 2 && /did not produce a finding/.test(r.stderr) && /Rules present/.test(r.stderr)
+})())
 
 // --outputs-file writes the CI key=value pairs the Action exposes.
 {

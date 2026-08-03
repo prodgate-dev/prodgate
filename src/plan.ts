@@ -118,15 +118,18 @@ function validatePlanDoc(doc: any): void {
     }
   }
   // Every recognized top-level section is type-checked when present, so a malformed
-  // section can never serve as the evidence that this document is a plan.
-  const OBJECT_SECTIONS = ['configuration', 'planned_values', 'prior_state', 'variables', 'output_changes', 'checks']
+  // section can never serve as the evidence that this document is a plan. A present
+  // section must have its expected type; null is not an accepted stand-in.
+  const OBJECT_SECTIONS = ['configuration', 'planned_values', 'prior_state', 'variables', 'output_changes']
+  // The checks representation is a list of check results, not an object.
+  const ARRAY_SECTIONS = ['resource_drift', 'relevant_attributes', 'checks']
   for (const key of OBJECT_SECTIONS) {
-    if (key in doc && doc[key] != null && !isPlainObject(doc[key])) {
+    if (key in doc && !isPlainObject(doc[key])) {
       throw new PlanInputError('UNSUPPORTED_FORMAT', `\`${key}\` must be an object.`)
     }
   }
-  for (const key of ['resource_drift', 'relevant_attributes']) {
-    if (key in doc && doc[key] != null && !Array.isArray(doc[key])) {
+  for (const key of ARRAY_SECTIONS) {
+    if (key in doc && !Array.isArray(doc[key])) {
       throw new PlanInputError('UNSUPPORTED_FORMAT', `\`${key}\` must be an array.`)
     }
   }
