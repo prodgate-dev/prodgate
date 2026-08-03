@@ -47,7 +47,7 @@
   },
   "author": "Prodgate Contributors",
   "dependencies": {
-    "commander": "^14.0.0"
+    "commander": "^15.0.0"
   },
   "devDependencies": {
     "@types/node": "^25.6.0",
