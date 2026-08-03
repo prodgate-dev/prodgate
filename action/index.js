@@ -519,31 +519,35 @@ program
     .option('--json', 'Output raw JSON')
     .action((ruleId, options) => {
     const wanted = ruleId.toUpperCase();
-    const entries = (0, coverage_1.buildCoverage)().entries.filter(e => e.ruleId.toUpperCase() === wanted);
-    if (entries.length === 0) {
-        const known = [...new Set((0, coverage_1.buildCoverage)().entries.map(e => e.ruleId))].sort();
-        console.error(`Unknown rule "${ruleId}". Known rules: ${known.join(', ')}`);
+    const rules = (0, coverage_1.buildRuleSummaries)();
+    const rule = rules.find(r => r.ruleId.toUpperCase() === wanted);
+    if (!rule) {
+        console.error(`Unknown rule "${ruleId}". Known rules: ${rules.map(r => r.ruleId).join(', ')}`);
         process.exit(2);
     }
-    const e = entries[0];
     if (options.json) {
-        console.log(JSON.stringify({ ...e, resourceTypes: entries.map(x => x.resourceType) }, null, 2));
+        console.log(JSON.stringify(rule, null, 2));
         return;
     }
-    console.log(`${e.ruleId}`);
+    console.log(`${rule.ruleId}`);
     console.log('');
-    console.log(`  Category:    ${e.category}`);
-    console.log(`  Severity:    ${e.defaultSeverity} by default (possible: ${e.possibleSeverities.join(', ')})`);
-    if (e.severityCondition)
-        console.log(`               ${e.severityCondition}`);
-    console.log(`  Actions:     ${e.actions.join(', ')}`);
-    console.log(`  Applies to:  ${entries.map(x => x.resourceType).join(', ')}`);
-    if (e.evidenceFields.length)
-        console.log(`  Evidence:    ${e.evidenceFields.join(', ')}`);
+    console.log(`  Category:    ${rule.category}`);
+    console.log(`  Severity:    ${rule.defaultSeverity} by default (possible: ${rule.possibleSeverities.join(', ')})`);
+    if (rule.severityCondition)
+        console.log(`               ${rule.severityCondition}`);
+    console.log(`  Actions:     ${rule.actions.join(', ')}`);
+    if (rule.evidenceFields.length)
+        console.log(`  Evidence:    ${rule.evidenceFields.join(', ')}`);
     console.log('');
-    console.log(`  Why: ${e.rationale}`);
-    for (const l of e.limitations)
+    console.log(`  Why: ${rule.rationale}`);
+    for (const l of rule.limitations)
         console.log(`  Limitation: ${l}`);
+    if (rule.entries.length > 0) {
+        console.log('');
+        console.log(`  Applies to ${rule.entries.length} resource type(s):`);
+        for (const e of rule.entries)
+            console.log(`    ${e.resourceType.padEnd(40)} ${e.rationale}`);
+    }
     console.log('');
 });
 program
@@ -553,14 +557,19 @@ program
     .option('--config <file>', 'Path to prodgate.config.json')
     .action((planPath, options) => {
     const lines = [];
-    let problems = 0;
-    const ok = (label, detail) => lines.push(`  [ok]   ${label}: ${detail}`);
-    const bad = (label, detail) => { problems++; lines.push(`  [warn] ${label}: ${detail}`); };
+    // advisories do not stop an evaluation; blockers mean a named input is missing or
+    // unusable, so they exit 2 like any other input error.
+    let advisories = 0;
+    let blockers = 0;
+    const ok = (label, detail) => lines.push(`  [ok]    ${label}: ${detail}`);
+    const note = (detail) => lines.push(`  [note]  ${detail}`);
+    const warn = (label, detail) => { advisories++; lines.push(`  [warn]  ${label}: ${detail}`); };
+    const block = (label, detail) => { blockers++; lines.push(`  [error] ${label}: ${detail}`); };
     const major = Number(process.versions.node.split('.')[0]);
     if (major >= 20)
         ok('Node', `${process.versions.node}`);
     else
-        bad('Node', `${process.versions.node} is below the supported minimum of 20`);
+        block('Node', `${process.versions.node} is below the supported minimum of 20`);
     ok('Engine', `prodgate ${ENGINE_VERSION}`);
     ok('Policy', `${resources_1.POLICY_VERSION}`);
     const configTarget = options.config ?? 'prodgate.config.json';
@@ -569,7 +578,7 @@ program
         ok('Config', `${configTarget} is valid`);
     }
     else if (options.config) {
-        bad('Config', `${configTarget} was named but does not exist`);
+        block('Config', `${configTarget} was named but does not exist`);
     }
     else {
         ok('Config', 'none found, using zero-config defaults');
@@ -577,32 +586,33 @@ program
     if (process.env.GITHUB_ACTIONS === 'true') {
         ok('Environment', `GitHub Actions, repository ${process.env.GITHUB_REPOSITORY ?? 'unknown'}`);
         if (!process.env.PRODGATE_COMMIT_SHA && !process.env.GITHUB_SHA)
-            bad('Environment', 'no commit SHA available for the report');
+            warn('Environment', 'no commit SHA available for the report');
     }
     else {
         ok('Environment', 'local run, no CI metadata');
     }
     if (planPath) {
         if (!fs.existsSync(planPath)) {
-            bad('Plan', `${planPath} does not exist`);
+            block('Plan', `${planPath} does not exist`);
         }
         else {
             try {
                 const parsed = (0, plan_1.parsePlanFull)(readTextFile(planPath));
                 const managed = parsed.changes.length;
                 ok('Plan', `${planPath} parsed, format ${parsed.formatVersion ?? 'unknown'}, terraform ${parsed.terraformVersion ?? 'unknown'}`);
+                // A valid plan with nothing to evaluate is a normal state, not a problem.
                 if (managed === 0)
-                    bad('Plan', 'no managed resource changes, so there is nothing for Prodgate to evaluate');
+                    note('The plan is valid and has no managed resource changes, so there is nothing to evaluate.');
                 else
                     ok('Plan', `${managed} managed resource change(s) to evaluate`);
             }
             catch (e) {
-                bad('Plan', e.message);
+                block('Plan', e.message);
             }
         }
     }
     else {
-        lines.push('  [note] pass a plan file to check that it is readable and has changes');
+        note('Pass a plan file to check that it is readable and has changes.');
     }
     console.log('');
     console.log('Prodgate doctor');
@@ -610,7 +620,17 @@ program
     for (const l of lines)
         console.log(l);
     console.log('');
-    console.log(problems === 0 ? 'No problems found.' : `${problems} thing(s) to look at.`);
+    if (blockers > 0) {
+        console.log(`${blockers} problem(s) would stop Prodgate from evaluating.`);
+        console.log('');
+        process.exit(2);
+    }
+    if (advisories > 0) {
+        console.log(`${advisories} advisory item(s). Evaluation is still possible.`);
+        console.log('');
+        process.exit(1);
+    }
+    console.log('No problems found.');
     console.log('');
 });
 program
@@ -638,6 +658,19 @@ program
     const result = (0, classify_1.classifyPlan)(parsed.changes, { mode, failOn, config, policyDigest: computePolicyDigest(mode, failOn, config) });
     const wanted = options.finding ? String(options.finding).toUpperCase() : undefined;
     const findings = result.findings.filter(f => !wanted || f.ruleId.toUpperCase() === wanted);
+    // A filter that matches nothing is reported rather than returning an empty list,
+    // so a mistyped rule id is not mistaken for "the rule did not fire".
+    if (wanted && findings.length === 0) {
+        const known = (0, coverage_1.buildRuleSummaries)().some(r => r.ruleId.toUpperCase() === wanted);
+        const present = [...new Set(result.findings.map(f => f.ruleId))].sort();
+        console.error(known
+            ? `Rule ${options.finding} did not produce a finding for this plan.`
+            : `Unknown rule "${options.finding}".`);
+        console.error(present.length > 0
+            ? `Rules present in this plan: ${present.join(', ')}`
+            : 'This plan produced no findings.');
+        process.exit(2);
+    }
     // Only rule ids, resource types, actions, and normalized evidence tokens. No
     // addresses, names, tags, values, or anything else drawn from the plan.
     console.log(JSON.stringify({
@@ -886,8 +919,91 @@ function buildEnvelope(result, planMeta) {
  * cannot drift from what it actually evaluates.
  */
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.buildRuleSummaries = buildRuleSummaries;
 exports.buildCoverage = buildCoverage;
 const resources_1 = __nccwpck_require__(802);
+// Rationales for the rules the classifier raises directly. They are not tied to a
+// single resource type, so they are described once here.
+const GENERIC_RULE_RATIONALES = {
+    'PG-DESTROY-STATEFUL': 'Destroying or replacing a resource that holds data may cause data loss. Each covered resource type records what it holds.',
+    'PG-DESTROY-STATEFUL-NONPROD': 'The same destruction as PG-DESTROY-STATEFUL, on a resource the team explicitly tagged as a non-production environment, so it is reported without blocking.',
+    'PG-DESTROY-PROD': 'Destroying or replacing a resource that is classified as production, even when it holds no data, removes something production depends on.',
+    'PG-DESTROY-OTHER': 'A resource is destroyed or replaced. It is neither data-holding nor production-classified, so it is reported for awareness.',
+    'PG-DISRUPTION-NOTE': 'Replacing or removing a compute or network member interrupts service while it is recreated or gone. Reported as context, never as a finding.',
+};
+// Rules the classifier can emit that are not tied to the resource tables.
+const CLASSIFIER_RULES = [
+    {
+        ruleId: 'PG-DESTROY-STATEFUL-NONPROD',
+        category: 'data_loss',
+        defaultSeverity: 'WARNING',
+        possibleSeverities: ['WARNING'],
+        severityCondition: 'critical instead when the environment signals conflict or the resource is protected, reported as PG-DESTROY-STATEFUL',
+        actions: ['delete', 'replace'],
+        evidenceFields: ['change.actions', 'before.environmentClassification'],
+        rationale: GENERIC_RULE_RATIONALES['PG-DESTROY-STATEFUL-NONPROD'],
+        limitations: [
+            'Relies on an explicit non-production environment tag. An untagged resource stays critical.',
+            'Cannot determine whether usable backups or snapshots exist.',
+        ],
+        entries: [],
+    },
+    {
+        ruleId: 'PG-DESTROY-PROD',
+        category: 'availability',
+        defaultSeverity: 'CRITICAL',
+        possibleSeverities: ['CRITICAL'],
+        actions: ['delete', 'replace'],
+        evidenceFields: ['change.actions', 'before.environmentClassification'],
+        rationale: GENERIC_RULE_RATIONALES['PG-DESTROY-PROD'],
+        limitations: [
+            'Production is inferred from environment tags, a production-looking Name tag, or the resource address.',
+            'Cannot tell whether the resource is actually serving traffic.',
+        ],
+        entries: [],
+    },
+    {
+        ruleId: 'PG-DESTROY-OTHER',
+        category: 'availability',
+        defaultSeverity: 'WARNING',
+        possibleSeverities: ['WARNING'],
+        actions: ['delete', 'replace'],
+        evidenceFields: ['change.actions'],
+        rationale: GENERIC_RULE_RATIONALES['PG-DESTROY-OTHER'],
+        limitations: ['Cannot tell whether the resource is actually in use.'],
+        entries: [],
+    },
+];
+// Every rule id that can appear in a finding, described once.
+function buildRuleSummaries() {
+    const byId = new Map();
+    for (const e of buildCoverage().entries) {
+        const existing = byId.get(e.ruleId);
+        if (existing) {
+            existing.entries.push({ resourceType: e.resourceType, rationale: e.rationale });
+            for (const a of e.actions)
+                if (!existing.actions.includes(a))
+                    existing.actions.push(a);
+            continue;
+        }
+        byId.set(e.ruleId, {
+            ruleId: e.ruleId,
+            category: e.category,
+            defaultSeverity: e.defaultSeverity,
+            possibleSeverities: e.possibleSeverities,
+            severityCondition: e.severityCondition,
+            actions: [...e.actions],
+            evidenceFields: e.evidenceFields,
+            rationale: GENERIC_RULE_RATIONALES[e.ruleId] ?? e.rationale,
+            limitations: e.limitations,
+            entries: [{ resourceType: e.resourceType, rationale: e.rationale }],
+        });
+    }
+    for (const r of CLASSIFIER_RULES)
+        if (!byId.has(r.ruleId))
+            byId.set(r.ruleId, r);
+    return [...byId.values()].sort((a, b) => a.ruleId.localeCompare(b.ruleId));
+}
 // Limitations shared by every stateful destruction: the plan alone cannot show
 // whether the data is recoverable.
 const STATEFUL_LIMITATIONS = [
@@ -1302,15 +1418,18 @@ function validatePlanDoc(doc) {
         }
     }
     // Every recognized top-level section is type-checked when present, so a malformed
-    // section can never serve as the evidence that this document is a plan.
-    const OBJECT_SECTIONS = ['configuration', 'planned_values', 'prior_state', 'variables', 'output_changes', 'checks'];
+    // section can never serve as the evidence that this document is a plan. A present
+    // section must have its expected type; null is not an accepted stand-in.
+    const OBJECT_SECTIONS = ['configuration', 'planned_values', 'prior_state', 'variables', 'output_changes'];
+    // The checks representation is a list of check results, not an object.
+    const ARRAY_SECTIONS = ['resource_drift', 'relevant_attributes', 'checks'];
     for (const key of OBJECT_SECTIONS) {
-        if (key in doc && doc[key] != null && !isPlainObject(doc[key])) {
+        if (key in doc && !isPlainObject(doc[key])) {
             throw new PlanInputError('UNSUPPORTED_FORMAT', `\`${key}\` must be an object.`);
         }
     }
-    for (const key of ['resource_drift', 'relevant_attributes']) {
-        if (key in doc && doc[key] != null && !Array.isArray(doc[key])) {
+    for (const key of ARRAY_SECTIONS) {
+        if (key in doc && !Array.isArray(doc[key])) {
             throw new PlanInputError('UNSUPPORTED_FORMAT', `\`${key}\` must be an array.`);
         }
     }

@@ -12,7 +12,7 @@ import * as path from 'path'
 import { parsePlan } from '../src/plan'
 import { classifyPlan } from '../src/classify'
 import { detectAgent } from '../src/agent'
-import { buildCoverage } from '../src/coverage'
+import { buildCoverage, buildRuleSummaries } from '../src/coverage'
 import { DANGEROUS_MUTATIONS } from '../src/resources'
 import { formatGithub } from '../src/output'
 
@@ -287,6 +287,14 @@ console.log('─'.repeat(50))
   check('golden unknown-sg-cidr: computed ingress flagged for review, passes', r.verdict === 'pass' && r.findings.some(f => f.ruleId === 'PG-AWS-SG-WORLD-OPEN' && /unknown/i.test(f.summary)))
 }
 
+// A real plan using a check block and a precondition must be accepted. Terraform
+// emits `checks` as an array, and a repository using checks would otherwise be
+// rejected outright.
+{
+  const r = classifyPlan(golden('with-checks.tfplan.json'))
+  check('golden with-checks: a plan using check blocks is accepted', r.verdict === 'pass' && r.stats.resourcesScanned === 1)
+}
+
 // OpenTofu emits the same plan format, proven against real tofu output.
 {
   const r = classifyPlan(golden('opentofu-create-exposures.tofuplan.json'))
@@ -359,6 +367,23 @@ console.log('─'.repeat(50))
   check('coverage: every entry has rationale, limitations, and actions', cov.entries.every(e => e.rationale.length > 0 && e.limitations.length > 0 && e.actions.length > 0))
   check('coverage: finding rules carry evidence fields', cov.entries.filter(e => e.defaultSeverity !== 'INFO').every(e => e.evidenceFields.length > 0))
   check('coverage: sg rule advertises both severities', (() => { const sg = cov.entries.find(e => e.ruleId === 'PG-AWS-SG-WORLD-OPEN'); return !!sg && sg.possibleSeverities.includes('CRITICAL') && sg.possibleSeverities.includes('WARNING') })())
+
+  // Every rule id the classifier can emit must be explainable, so a user who sees an
+  // id in a finding can always look it up.
+  const summaries = buildRuleSummaries()
+  const explainable = new Set(summaries.map(r => r.ruleId))
+  const emitted = new Set<string>()
+  for (const f of [
+    'delete-db.json', 'delete-dev-db.json', 'delete-nonstateful-prod.json', 'delete-dev-lambda.json',
+    'public-db.json', 'sg-open-world.json', 'disable-deletion-protection.json', 'create-wildcard-iam.json',
+    'create-public-web-sg.json', 'delete-conflict-db.json',
+  ]) for (const finding of classifyPlan(fixture(f)).findings) emitted.add(finding.ruleId)
+  const missing = [...emitted].filter(id => !explainable.has(id))
+  check('every emitted rule id is explainable', emitted.size >= 6 && missing.length === 0)
+  check('rule summaries carry their own rationale and limitations', summaries.every(r => r.rationale.length > 0 && r.limitations.length > 0))
+  // A grouped rule describes itself rather than borrowing one resource's rationale.
+  const grouped = summaries.find(r => r.ruleId === 'PG-DESTROY-STATEFUL')
+  check('grouped rule has a generic rationale and per-type entries', !!grouped && grouped.entries.length > 5 && !/holds the database storage/.test(grouped.rationale))
 }
 
 // ── finding model (rule ids, category, confidence, evidence) ────────────────
@@ -559,7 +584,17 @@ throwsCode('plan-shaped document without format_version rejected', () => parsePl
 throwsCode('top-level array rejected', () => parsePlan('[]'), 'UNRECOGNIZED_DOCUMENT')
 // A malformed known section must never serve as proof the document is a plan.
 throwsCode('configuration false rejected', () => parsePlan('{"format_version":"1.2","configuration":false}'), 'UNSUPPORTED_FORMAT')
-throwsCode('configuration null rejected', () => parsePlan('{"format_version":"1.2","configuration":null}'), 'UNRECOGNIZED_DOCUMENT')
+throwsCode('configuration null rejected', () => parsePlan('{"format_version":"1.2","configuration":null}'), 'UNSUPPORTED_FORMAT')
+// A present section must have its expected type; null is not an accepted stand-in.
+throwsCode('null configuration alongside resource_changes rejected', () => parsePlan('{"format_version":"1.2","resource_changes":[],"configuration":null}'), 'UNSUPPORTED_FORMAT')
+throwsCode('null planned_values rejected', () => parsePlan('{"format_version":"1.2","resource_changes":[],"planned_values":null}'), 'UNSUPPORTED_FORMAT')
+throwsCode('null resource_drift rejected', () => parsePlan('{"format_version":"1.2","resource_changes":[],"resource_drift":null}'), 'UNSUPPORTED_FORMAT')
+throwsCode('checks as an object rejected', () => parsePlan('{"format_version":"1.2","resource_changes":[],"checks":{}}'), 'UNSUPPORTED_FORMAT')
+// checks is a list of check results, so a valid plan using check blocks must parse.
+{
+  const r = classifyPlan(parsePlan('{"format_version":"1.2","resource_changes":[],"checks":[]}'))
+  check('checks as an array is accepted', r.verdict === 'pass')
+}
 throwsCode('planned_values string rejected', () => parsePlan('{"format_version":"1.2","planned_values":"not a plan section"}'), 'UNSUPPORTED_FORMAT')
 throwsCode('planned_values array rejected', () => parsePlan('{"format_version":"1.2","planned_values":[]}'), 'UNSUPPORTED_FORMAT')
 throwsCode('valid resource_changes with a malformed section rejected', () => parsePlan('{"format_version":"1.2","resource_changes":[],"configuration":false,"planned_values":"wrong"}'), 'UNSUPPORTED_FORMAT')
