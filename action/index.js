@@ -512,6 +512,151 @@ program
     console.log('');
     console.log(`${entries.length} entries. Use --json for evidence fields and limitations.`);
 });
+program
+    .command('explain')
+    .description('Explain a rule: what it flags, when, and what it cannot determine')
+    .argument('<ruleId>', 'Rule id, for example PG-AWS-RDS-PUBLIC')
+    .option('--json', 'Output raw JSON')
+    .action((ruleId, options) => {
+    const wanted = ruleId.toUpperCase();
+    const entries = (0, coverage_1.buildCoverage)().entries.filter(e => e.ruleId.toUpperCase() === wanted);
+    if (entries.length === 0) {
+        const known = [...new Set((0, coverage_1.buildCoverage)().entries.map(e => e.ruleId))].sort();
+        console.error(`Unknown rule "${ruleId}". Known rules: ${known.join(', ')}`);
+        process.exit(2);
+    }
+    const e = entries[0];
+    if (options.json) {
+        console.log(JSON.stringify({ ...e, resourceTypes: entries.map(x => x.resourceType) }, null, 2));
+        return;
+    }
+    console.log(`${e.ruleId}`);
+    console.log('');
+    console.log(`  Category:    ${e.category}`);
+    console.log(`  Severity:    ${e.defaultSeverity} by default (possible: ${e.possibleSeverities.join(', ')})`);
+    if (e.severityCondition)
+        console.log(`               ${e.severityCondition}`);
+    console.log(`  Actions:     ${e.actions.join(', ')}`);
+    console.log(`  Applies to:  ${entries.map(x => x.resourceType).join(', ')}`);
+    if (e.evidenceFields.length)
+        console.log(`  Evidence:    ${e.evidenceFields.join(', ')}`);
+    console.log('');
+    console.log(`  Why: ${e.rationale}`);
+    for (const l of e.limitations)
+        console.log(`  Limitation: ${l}`);
+    console.log('');
+});
+program
+    .command('doctor')
+    .description('Check the local setup and whether a plan file is usable')
+    .argument('[plan]', 'Optional path to a plan file to inspect')
+    .option('--config <file>', 'Path to prodgate.config.json')
+    .action((planPath, options) => {
+    const lines = [];
+    let problems = 0;
+    const ok = (label, detail) => lines.push(`  [ok]   ${label}: ${detail}`);
+    const bad = (label, detail) => { problems++; lines.push(`  [warn] ${label}: ${detail}`); };
+    const major = Number(process.versions.node.split('.')[0]);
+    if (major >= 20)
+        ok('Node', `${process.versions.node}`);
+    else
+        bad('Node', `${process.versions.node} is below the supported minimum of 20`);
+    ok('Engine', `prodgate ${ENGINE_VERSION}`);
+    ok('Policy', `${resources_1.POLICY_VERSION}`);
+    const configTarget = options.config ?? 'prodgate.config.json';
+    if (fs.existsSync(configTarget)) {
+        loadConfig(options.config); // exits 2 with a clear message when invalid
+        ok('Config', `${configTarget} is valid`);
+    }
+    else if (options.config) {
+        bad('Config', `${configTarget} was named but does not exist`);
+    }
+    else {
+        ok('Config', 'none found, using zero-config defaults');
+    }
+    if (process.env.GITHUB_ACTIONS === 'true') {
+        ok('Environment', `GitHub Actions, repository ${process.env.GITHUB_REPOSITORY ?? 'unknown'}`);
+        if (!process.env.PRODGATE_COMMIT_SHA && !process.env.GITHUB_SHA)
+            bad('Environment', 'no commit SHA available for the report');
+    }
+    else {
+        ok('Environment', 'local run, no CI metadata');
+    }
+    if (planPath) {
+        if (!fs.existsSync(planPath)) {
+            bad('Plan', `${planPath} does not exist`);
+        }
+        else {
+            try {
+                const parsed = (0, plan_1.parsePlanFull)(readTextFile(planPath));
+                const managed = parsed.changes.length;
+                ok('Plan', `${planPath} parsed, format ${parsed.formatVersion ?? 'unknown'}, terraform ${parsed.terraformVersion ?? 'unknown'}`);
+                if (managed === 0)
+                    bad('Plan', 'no managed resource changes, so there is nothing for Prodgate to evaluate');
+                else
+                    ok('Plan', `${managed} managed resource change(s) to evaluate`);
+            }
+            catch (e) {
+                bad('Plan', e.message);
+            }
+        }
+    }
+    else {
+        lines.push('  [note] pass a plan file to check that it is readable and has changes');
+    }
+    console.log('');
+    console.log('Prodgate doctor');
+    console.log('');
+    for (const l of lines)
+        console.log(l);
+    console.log('');
+    console.log(problems === 0 ? 'No problems found.' : `${problems} thing(s) to look at.`);
+    console.log('');
+});
+program
+    .command('diagnostics')
+    .description('Print sanitized metadata for a bug report (no plan values)')
+    .argument('<plan>', 'Path to a `terraform show -json` plan file')
+    .option('--finding <ruleId>', 'Limit the report to one rule id')
+    .option('--config <file>', 'Path to prodgate.config.json')
+    .action((planPath, options) => {
+    if (!fs.existsSync(planPath)) {
+        console.error(`Plan file not found: ${planPath}`);
+        process.exit(2);
+    }
+    let parsed;
+    try {
+        parsed = (0, plan_1.parsePlanFull)(readTextFile(planPath));
+    }
+    catch (e) {
+        console.error(e.message);
+        process.exit(2);
+    }
+    const config = loadConfig(options.config);
+    const mode = resolveMode(undefined, config);
+    const failOn = resolveFailOn(undefined, false, config);
+    const result = (0, classify_1.classifyPlan)(parsed.changes, { mode, failOn, config, policyDigest: computePolicyDigest(mode, failOn, config) });
+    const wanted = options.finding ? String(options.finding).toUpperCase() : undefined;
+    const findings = result.findings.filter(f => !wanted || f.ruleId.toUpperCase() === wanted);
+    // Only rule ids, resource types, actions, and normalized evidence tokens. No
+    // addresses, names, tags, values, or anything else drawn from the plan.
+    console.log(JSON.stringify({
+        engine: { name: 'prodgate', version: ENGINE_VERSION },
+        policy: { version: resources_1.POLICY_VERSION, digest: result.policyDigest },
+        plan: { formatVersion: parsed.formatVersion, terraformVersion: parsed.terraformVersion },
+        enforcement: { mode: result.enforcementMode, failOn: result.failOn, executionOutcome: result.executionOutcome },
+        stats: result.stats,
+        findings: findings.map(f => ({
+            ruleId: f.ruleId,
+            severity: f.severity,
+            category: f.category,
+            confidence: f.confidence,
+            resourceType: f.resource.type,
+            action: f.action,
+            evidence: f.evidence,
+        })),
+    }, null, 2));
+});
 program.parse();
 // Read a text file, honoring a UTF-16 byte-order mark. PowerShell's `>` and
 // `Out-File` emit UTF-16 LE (5.1) or UTF-8 with a BOM, so a plan piped from
@@ -1156,8 +1301,23 @@ function validatePlanDoc(doc) {
             throw new PlanInputError('PLAN_ERRORED', 'This plan reports `errored: true`, so planning failed and it cannot be applied. Fix the plan and regenerate it.');
         }
     }
+    // Every recognized top-level section is type-checked when present, so a malformed
+    // section can never serve as the evidence that this document is a plan.
+    const OBJECT_SECTIONS = ['configuration', 'planned_values', 'prior_state', 'variables', 'output_changes', 'checks'];
+    for (const key of OBJECT_SECTIONS) {
+        if (key in doc && doc[key] != null && !isPlainObject(doc[key])) {
+            throw new PlanInputError('UNSUPPORTED_FORMAT', `\`${key}\` must be an object.`);
+        }
+    }
+    for (const key of ['resource_drift', 'relevant_attributes']) {
+        if (key in doc && doc[key] != null && !Array.isArray(doc[key])) {
+            throw new PlanInputError('UNSUPPORTED_FORMAT', `\`${key}\` must be an array.`);
+        }
+    }
     const hasResourceChanges = 'resource_changes' in doc;
-    const looksLikePlan = hasResourceChanges || 'planned_values' in doc || 'configuration' in doc;
+    // A section only counts as evidence when it is present and well formed.
+    const hasSection = (key) => key in doc && isPlainObject(doc[key]);
+    const looksLikePlan = hasResourceChanges || hasSection('planned_values') || hasSection('configuration');
     if (!looksLikePlan) {
         if ('values' in doc || 'resources' in doc) {
             throw new PlanInputError('UNRECOGNIZED_DOCUMENT', 'This looks like Terraform state, not a plan. Provide `terraform show -json <planfile>`.');
@@ -1166,6 +1326,11 @@ function validatePlanDoc(doc) {
     }
     if (hasResourceChanges && !Array.isArray(doc.resource_changes)) {
         throw new PlanInputError('INVALID_RESOURCE_CHANGE', '`resource_changes` must be an array.');
+    }
+    // A plan with no resource_changes must still carry the structure a real no-change
+    // plan has, so a bare document cannot pass as "nothing to do".
+    if (!hasResourceChanges && !(hasSection('planned_values') && hasSection('configuration'))) {
+        throw new PlanInputError('UNRECOGNIZED_DOCUMENT', 'A plan without `resource_changes` must still include `planned_values` and `configuration`. Provide `terraform show -json <planfile>`.');
     }
 }
 function isPlainObject(v) {

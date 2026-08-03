@@ -233,6 +233,47 @@ check('coverage --provider gcp is empty', (() => {
 })())
 check('coverage --json is stable across runs', run(['coverage', '--json']).stdout === run(['coverage', '--json']).stdout)
 
+// explain, doctor, and diagnostics.
+check('explain describes a known rule', (() => {
+  const r = run(['explain', 'PG-AWS-RDS-PUBLIC'])
+  return r.code === 0 && /exposure/.test(r.stdout) && /publicly_accessible/.test(r.stdout) && /Limitation/.test(r.stdout)
+})())
+check('explain is case insensitive', run(['explain', 'pg-aws-rds-public']).code === 0)
+check('explain --json returns the rule entry', (() => {
+  const r = run(['explain', 'PG-AWS-SG-WORLD-OPEN', '--json'])
+  try { return r.code === 0 && JSON.parse(r.stdout).ruleId === 'PG-AWS-SG-WORLD-OPEN' } catch { return false }
+})())
+check('explain on an unknown rule exits 2', run(['explain', 'PG-NOPE']).code === 2)
+
+check('doctor reports a healthy setup', (() => {
+  const r = run(['doctor', fixture('delete-db.json')])
+  return r.code === 0 && /Node/.test(r.stdout) && /No problems found/.test(r.stdout)
+})())
+check('doctor flags a plan with no managed changes', (() => {
+  const r = run(['doctor', fixture('golden/no-change.tfplan.json')])
+  return /nothing for Prodgate to evaluate/.test(r.stdout)
+})())
+check('doctor flags an unparsable plan', run(['doctor', writeTmp('{}')]).stdout.includes('[warn]'))
+
+check('diagnostics emits sanitized metadata only', (() => {
+  const r = run(['diagnostics', fixture('golden/create-exposures.tfplan.json')])
+  try {
+    const o = JSON.parse(r.stdout)
+    const text = r.stdout
+    // Rule ids and resource types are fine; addresses, names, and values are not.
+    const leaks = ['aws_db_instance.public', 'example-open-bucket', 'dbadmin', 'PLACEHOLDER']
+    return r.code === 0 && o.findings.length === 3 && o.policy.digest.startsWith('sha256:') && !leaks.some(l => text.includes(l))
+  } catch { return false }
+})())
+check('diagnostics --finding filters to one rule', (() => {
+  const r = run(['diagnostics', fixture('golden/create-exposures.tfplan.json'), '--finding', 'PG-AWS-RDS-PUBLIC'])
+  try {
+    const f = JSON.parse(r.stdout).findings
+    return f.length === 1 && f[0].ruleId === 'PG-AWS-RDS-PUBLIC'
+  } catch { return false }
+})())
+check('diagnostics on a missing plan exits 2', run(['diagnostics', path.join(os.tmpdir(), 'nope-xyz.json')]).code === 2)
+
 // --outputs-file writes the CI key=value pairs the Action exposes.
 {
   const outFile = path.join(os.tmpdir(), `pg-outputs-${process.pid}-${counter++}.txt`)

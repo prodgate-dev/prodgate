@@ -287,6 +287,17 @@ console.log('─'.repeat(50))
   check('golden unknown-sg-cidr: computed ingress flagged for review, passes', r.verdict === 'pass' && r.findings.some(f => f.ruleId === 'PG-AWS-SG-WORLD-OPEN' && /unknown/i.test(f.summary)))
 }
 
+// OpenTofu emits the same plan format, proven against real tofu output.
+{
+  const r = classifyPlan(golden('opentofu-create-exposures.tofuplan.json'))
+  const ids = r.findings.map(f => f.ruleId)
+  check('golden opentofu create: same findings as terraform', r.verdict === 'fail' && r.stats.criticalCount === 3 && ids.includes('PG-AWS-RDS-PUBLIC') && ids.includes('PG-AWS-S3-PUBLIC-ACCESS') && ids.includes('PG-AWS-SG-WORLD-OPEN'))
+}
+{
+  const r = classifyPlan(golden('opentofu-no-change.tofuplan.json'))
+  check('golden opentofu no-change: pass, 0 scanned', r.verdict === 'pass' && r.stats.resourcesScanned === 0)
+}
+
 {
   // A real deferred data-source read is validated but not classified.
   const r = classifyPlan(golden('data-source-read.tfplan.json'))
@@ -546,6 +557,15 @@ throwsCode('empty object rejected', () => parsePlan('{}'), 'UNSUPPORTED_FORMAT')
 throwsCode('missing format_version rejected', () => parsePlan('{"resource_changes":[]}'), 'UNSUPPORTED_FORMAT')
 throwsCode('plan-shaped document without format_version rejected', () => parsePlan('{"configuration":{"root_module":{}}}'), 'UNSUPPORTED_FORMAT')
 throwsCode('top-level array rejected', () => parsePlan('[]'), 'UNRECOGNIZED_DOCUMENT')
+// A malformed known section must never serve as proof the document is a plan.
+throwsCode('configuration false rejected', () => parsePlan('{"format_version":"1.2","configuration":false}'), 'UNSUPPORTED_FORMAT')
+throwsCode('configuration null rejected', () => parsePlan('{"format_version":"1.2","configuration":null}'), 'UNRECOGNIZED_DOCUMENT')
+throwsCode('planned_values string rejected', () => parsePlan('{"format_version":"1.2","planned_values":"not a plan section"}'), 'UNSUPPORTED_FORMAT')
+throwsCode('planned_values array rejected', () => parsePlan('{"format_version":"1.2","planned_values":[]}'), 'UNSUPPORTED_FORMAT')
+throwsCode('valid resource_changes with a malformed section rejected', () => parsePlan('{"format_version":"1.2","resource_changes":[],"configuration":false,"planned_values":"wrong"}'), 'UNSUPPORTED_FORMAT')
+throwsCode('resource_drift wrong type rejected', () => parsePlan('{"format_version":"1.2","resource_changes":[],"resource_drift":"nope"}'), 'UNSUPPORTED_FORMAT')
+throwsCode('output_changes wrong type rejected', () => parsePlan('{"format_version":"1.2","resource_changes":[],"output_changes":[]}'), 'UNSUPPORTED_FORMAT')
+throwsCode('no-change plan without structure rejected', () => parsePlan('{"format_version":"1.2","planned_values":{},"variables":{}}'), 'UNRECOGNIZED_DOCUMENT')
 throwsCode('state file rejected', () => parsePlan('{"format_version":"1.0","values":{"root_module":{}}}'), 'UNRECOGNIZED_DOCUMENT')
 throwsCode('truncated json rejected', () => parsePlan('{"resource_changes":['), 'INVALID_JSON')
 throwsCode('resource_changes wrong type rejected', () => parsePlan('{"format_version":"1.2","resource_changes":"wrong"}'), 'INVALID_RESOURCE_CHANGE')
