@@ -86,7 +86,8 @@ On every PR, Prodgate posts a one-line plan summary (what the change adds, chang
 - Do not expose privileged cloud credentials to a job that plans PR-authored code. Use a read-only role scoped to planning, and prefer an environment with required reviewers for anything stronger.
 - Keep `persist-credentials: false` on checkout so a later step cannot reuse the git token.
 - Grant the smallest permissions that work. Prodgate needs `issues: write` for the comment and the override label, and nothing more.
-- For stronger separation, split it into two jobs: one that plans and uploads `plan.json` as an artifact with no write permissions, and one that downloads it and runs Prodgate with the commenting permission.
+- Never upload `plan.json` as a workflow artifact. Anyone with read access to the repository can download artifacts, and on a public repository they are publicly reachable, so a plan holding a plaintext password or token would be exposed for the whole retention period.
+- For stronger separation, split it into two jobs and move only the sanitized output. The first job has no write permissions: it generates the plan, runs Prodgate immediately, writes the Markdown report with `--output`, and deletes the plan file. The second job takes only that report and holds the `issues: write` permission for commenting. Prodgate's report and JSON envelope omit resource values, so they are safe to pass between jobs in a way the raw plan is not.
 
 **Audit-first rollout.** Prodgate enforces by default: a critical finding fails the check. On an existing or production repository, run it in audit mode for a week first by adding `mode: audit` to the step. In audit mode the check reports what it would have blocked but does not fail the build. When you are confident it is not noisy, remove that line to enable enforcement.
 
@@ -237,6 +238,17 @@ The Action exposes outputs so later steps can react without parsing the comment:
         run: echo "Blocked ${{ steps.prodgate.outputs.critical-count }} critical change(s)"
 ```
 
+## Other commands
+
+```bash
+prodgate doctor [plan.json]        # check the local setup and whether a plan is usable
+prodgate coverage [--json]         # what Prodgate evaluates: resource types and rules
+prodgate explain PG-AWS-RDS-PUBLIC # what a rule flags, when, and what it cannot tell
+prodgate diagnostics plan.json     # sanitized metadata for a bug report, no plan values
+```
+
+`diagnostics` prints only rule ids, resource types, actions, and normalized evidence tokens. It never includes resource addresses, names, tags, or attribute values, so it is safe to paste into an issue. Use it with `--finding <ruleId>` to report one specific result.
+
 ## Trust boundary
 
 Prodgate reads a plan JSON file. It does not run Terraform, does not read your state, and never needs cloud credentials. It cannot do anything to your account; it can only read the plan.
@@ -258,7 +270,7 @@ These are standard for any CI-side policy check (OPA, Checkov, and others share 
 | Surface | Coverage |
 |---------|----------|
 | Terraform plan JSON | Supported and tested against real `terraform show -json` output |
-| OpenTofu plan JSON | Expected to work (same plan format) and undergoing validation; no OpenTofu-generated plan is in the test corpus yet |
+| OpenTofu plan JSON | Supported and tested against real `tofu show -json` output |
 | AWS resources | Supported (stateful resources, public DB, S3 public access, security groups, IAM, deletion protection) |
 | GCP / Azure | Planned |
 | Pulumi / CDK / CloudFormation | Not supported |

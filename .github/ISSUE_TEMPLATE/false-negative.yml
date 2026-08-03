@@ -7,7 +7,10 @@ body:
       value: |
         Do not attach a raw production plan. Terraform plan JSON can contain plaintext
         secrets. Share only the fields below and a minimal, sanitized reproduction.
-        See the redaction guide in docs/reporting.md.
+
+        `prodgate diagnostics plan.json` prints only rule ids, resource types, actions,
+        and normalized evidence, which is safe to paste here. See the redaction guide
+        in docs/reporting.md.
   - type: input
     id: version
     attributes:

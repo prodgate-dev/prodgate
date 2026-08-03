@@ -27,7 +27,7 @@
     "prepublishOnly": "npm run build",
     "dev": "ts-node src/cli.ts",
     "pretest": "npm run build",
-    "test": "ts-node test/case_plan.ts && ts-node test/cli_test.ts"
+    "test": "ts-node test/case_plan.ts && ts-node test/cli_test.ts && ts-node test/fuzz_test.ts"
   },
   "publishConfig": {
     "access": "public",

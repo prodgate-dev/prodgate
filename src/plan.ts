@@ -117,8 +117,24 @@ function validatePlanDoc(doc: any): void {
       throw new PlanInputError('PLAN_ERRORED', 'This plan reports `errored: true`, so planning failed and it cannot be applied. Fix the plan and regenerate it.')
     }
   }
+  // Every recognized top-level section is type-checked when present, so a malformed
+  // section can never serve as the evidence that this document is a plan.
+  const OBJECT_SECTIONS = ['configuration', 'planned_values', 'prior_state', 'variables', 'output_changes', 'checks']
+  for (const key of OBJECT_SECTIONS) {
+    if (key in doc && doc[key] != null && !isPlainObject(doc[key])) {
+      throw new PlanInputError('UNSUPPORTED_FORMAT', `\`${key}\` must be an object.`)
+    }
+  }
+  for (const key of ['resource_drift', 'relevant_attributes']) {
+    if (key in doc && doc[key] != null && !Array.isArray(doc[key])) {
+      throw new PlanInputError('UNSUPPORTED_FORMAT', `\`${key}\` must be an array.`)
+    }
+  }
+
   const hasResourceChanges = 'resource_changes' in doc
-  const looksLikePlan = hasResourceChanges || 'planned_values' in doc || 'configuration' in doc
+  // A section only counts as evidence when it is present and well formed.
+  const hasSection = (key: string) => key in doc && isPlainObject(doc[key])
+  const looksLikePlan = hasResourceChanges || hasSection('planned_values') || hasSection('configuration')
   if (!looksLikePlan) {
     if ('values' in doc || 'resources' in doc) {
       throw new PlanInputError('UNRECOGNIZED_DOCUMENT', 'This looks like Terraform state, not a plan. Provide `terraform show -json <planfile>`.')
@@ -127,6 +143,11 @@ function validatePlanDoc(doc: any): void {
   }
   if (hasResourceChanges && !Array.isArray(doc.resource_changes)) {
     throw new PlanInputError('INVALID_RESOURCE_CHANGE', '`resource_changes` must be an array.')
+  }
+  // A plan with no resource_changes must still carry the structure a real no-change
+  // plan has, so a bare document cannot pass as "nothing to do".
+  if (!hasResourceChanges && !(hasSection('planned_values') && hasSection('configuration'))) {
+    throw new PlanInputError('UNRECOGNIZED_DOCUMENT', 'A plan without `resource_changes` must still include `planned_values` and `configuration`. Provide `terraform show -json <planfile>`.')
   }
 }
 
