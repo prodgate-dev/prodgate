@@ -405,9 +405,11 @@ program
     }
     if (!planStat || !planStat.isFile()) {
         const code = planStat ? 'UNSUPPORTED_FORMAT' : 'PLAN_NOT_FOUND';
+        // Say how to produce the file. A missing plan is the most common setup mistake,
+        // and the fix is one command.
         const message = planStat
             ? `The plan path must reference a regular file: ${planPath}`
-            : `Plan file not found: ${planPath}`;
+            : `Plan file not found: ${planPath}. Generate it with \`terraform show -json plan.tfplan > ${planPath}\`, or point the plan-json input at the correct path.`;
         if (options.json) {
             console.log(JSON.stringify({ error: { code, message } }, null, 2));
         }
