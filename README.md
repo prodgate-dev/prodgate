@@ -1,87 +1,68 @@
 # Prodgate
 
-A deterministic approval and evidence layer for infrastructure changes made by humans and AI agents.
+> A deterministic approval and evidence layer for infrastructure changes made by humans and AI agents.
 
 Prodgate reads Terraform/OpenTofu plans and blocks destructive or dangerous changes before they are applied.
 
 It reads the plan locally. It does not run Terraform and does not need cloud credentials.
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/prodgate-dev/prodgate/main/demo/prodgate.gif" alt="Prodgate reads a Terraform plan and blocks a change that deletes a production database" width="760">
+  <img src="https://raw.githubusercontent.com/prodgate-dev/prodgate/main/demo/prodgate.gif" alt="Prodgate blocks an AI agent's attempt to delete a production database" width="760">
 </p>
 
-## The problem
+## Quickstart: GitHub Actions
 
-An infrastructure diff can look routine and still delete a database, replace a volume, or expose a resource to the internet. The change is harder to review when an AI agent wrote it. Prodgate turns that change into a failed check with a recorded override.
-
-## Quickstart
-
-Add this to a pull-request workflow. Your pipeline produces the plan. Prodgate reads it.
+Add Prodgate after the step that creates your plan.
 
 ```yaml
-name: Prodgate
-
-on:
-  pull_request:
-    types: [opened, synchronize, reopened, labeled, unlabeled]
-
 permissions:
   contents: read
-  pull-requests: write
+  pull-requests: write # needed for the PR comment and override label
 
-jobs:
-  prodgate:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          fetch-depth: 0
-          persist-credentials: false
+steps:
+  # Your existing checkout and Terraform plan steps go here.
+  - name: Create JSON plan
+    run: terraform show -json plan.tfplan > plan.json
 
-      - run: terraform show -json plan.tfplan > plan.json
+  - name: Prodgate
+    uses: prodgate-dev/prodgate@v1
+    with:
+      plan-json: plan.json
 
-      - uses: prodgate-dev/prodgate@v1
+  - name: Remove plan file
+    if: always()
+    run: rm -f plan.json plan.tfplan
 ```
 
-`pull-requests: write` is required. Prodgate posts one comment per pull request and updates it. `plan-json` defaults to `plan.json`; set it if your plan is elsewhere.
+Prodgate needs a plan file produced by Terraform or OpenTofu. It does not create the plan or apply infrastructure changes.
 
-A plan file can contain secrets in plaintext. Add a step to delete it, and create the override label once:
+On a pull request, the Action posts a sanitized summary. A critical finding fails the check. Add the `prodgate-approved` label to record a manual override for that event.
 
-```yaml
-      - name: Remove plan file
-        if: always()
-        run: rm -f plan.json plan.tfplan
-```
+## Features
 
-```bash
-gh label create prodgate-approved --description "Recorded manual Prodgate override" --color D93F0B
-```
+- **Built-in policy.** Start without a policy file or rules to write.
+- **Plan-first decisions.** Prodgate evaluates the planned change, not only the configuration.
+- **Deterministic findings.** The same plan and policy produce the same result.
+- **Approval evidence.** Reports include the finding, plan hash, policy digest and override details without exposing resource values by default.
+- **CI integration.** Use the CLI or the GitHub Action. The Action can post a sanitized pull-request summary.
 
-To try Prodgate on your machine first:
+### Default checks
 
-```bash
-terraform show -json plan.tfplan > plan.json
-npx prodgate check plan.json
-```
-
-## Default behavior
-
-Prodgate enforces critical findings by default. You do not need a policy file.
-
-| Default | Behavior |
+| Change | Default result |
 |---|---|
-| Stateful resource delete or replace | Critical; fails CI |
-| Production-tagged destruction | Critical; fails CI |
-| Public database exposure | Critical; fails CI |
-| Weak S3 public-access protection | Critical when all protections are known false; warning when a security-critical result is unknown |
-| Public sensitive-port ingress | Critical |
-| Unknown security-critical value | Warning; requires review |
-| No managed changes | Pass with an explicit no-managed-changes message |
+| Delete or replace a stateful resource | Critical; fails CI |
+| Delete or replace a production-tagged resource | Critical; fails CI |
+| Make a database public | Critical; fails CI |
+| Weaken all S3 public-access protections | Critical; fails CI |
+| Open SSH, RDP or database ports to the world | Critical; fails CI |
+| Grant a wildcard IAM action or resource | Warning |
+| Security-critical value is unknown at plan time | Warning; requires review |
+| Valid plan with no managed changes | Pass with an explicit message |
 | Invalid or unrecognized plan | Exit 2; never passes |
 
-Exit code 2 means Prodgate could not evaluate the plan. It never means the change is safe.
+Prodgate evaluates the change in the plan. It does not judge only the final configuration. A replacement can therefore produce both a destruction finding and a dangerous-creation finding.
 
-## A blocked result
+Example:
 
 ```text
 [CRITICAL] DELETE aws_db_instance.main
@@ -91,61 +72,110 @@ replication, retention or versioning that Prodgate cannot verify.
 Verdict: FAIL
 ```
 
-Prodgate reports a data-loss risk. It does not claim the data is unrecoverable.
+## Audit mode
 
-## Audit-first rollout
-
-Run Prodgate in audit mode on an existing repository first.
+Use audit mode when introducing Prodgate to an existing repository:
 
 ```yaml
-      - uses: prodgate-dev/prodgate@v1
-        with:
-          mode: audit
+- name: Prodgate
+  uses: prodgate-dev/prodgate@v1
+  with:
+    plan-json: plan.json
+    mode: audit
 ```
 
 Audit mode reports what enforcement would block without failing the check. Remove `mode: audit` when the findings are trusted.
 
-## Override a finding
+## CLI
 
-Add the `prodgate-approved` label to the pull request. The finding stays reported and the gate passes. The override applies only to the run for the event that added the label, and a new commit invalidates it. This is a recorded override, not a verified approval. See the [threat model](docs/threat-model.md).
+Try Prodgate locally:
 
-## Zero-policy configuration
+```bash
+npx prodgate check plan.json
+```
 
-Prodgate uses a built-in policy. You do not need to write rules. Add `prodgate.config.json` only when you need exceptions, audit mode, or a different failure threshold.
+Or install it globally:
+
+```bash
+npm install --global prodgate
+prodgate check plan.json
+```
+
+Exit codes:
+
+| Code | Meaning |
+|---:|---|
+| `0` | Allowed or reported in audit mode |
+| `1` | Policy blocked the plan |
+| `2` | Prodgate could not evaluate the input or configuration |
+
+## Configuration and exceptions
+
+The defaults are `mode: enforce` and `failOn: critical`. No configuration file is required. Add `prodgate.config.json` only when you need an exception or a different enforcement setting:
 
 ```json
 {
   "schemaVersion": 1,
+  "mode": "enforce",
+  "failOn": "critical",
   "ignore": ["module.sandbox.*"],
   "allowDestruction": ["aws_db_instance.scratch"]
 }
 ```
 
-See [configuration](docs/configuration.md) for every option.
+`ignore` suppresses all findings for a matching resource. `allowDestruction` suppresses only the destruction finding. A recreated resource can still produce an exposure or dangerous-mutation finding.
 
-## Safety and data boundary
+See [JSON envelope and integration fields](docs/json-envelope.md) for the stable JSON output and policy/plan digests.
 
-- Prodgate reads a plan file locally. It does not run Terraform and does not need cloud credentials.
-- It does not upload plan contents and collects no telemetry. Reports omit resource values.
-- Plan files can contain secrets. Delete or protect them after use.
-- Prodgate catches mistakes and oversight. It is not a defense against a pull request that changes its own workflow.
+## Manual overrides
 
-Read [sensitive plan data](docs/sensitive-plans.md) and the [threat model](docs/threat-model.md) before you roll this out widely.
+The GitHub Action supports the `prodgate-approved` label as a repository-controlled manual override.
+
+The finding remains in the report. The gate passes only for the run triggered by adding the label. A new commit creates a new event and requires a new approval. GitHub permissions determine who can add the label; Prodgate does not verify separation of duties or the reviewer's team membership.
+
+## Protect sensitive plan data
+
+Terraform plans can contain secrets in plaintext. Prodgate reads the plan locally and omits resource values from reports, but the plan file itself still needs protection.
+
+- Do not commit `plan.json`.
+- Do not print the full plan JSON to CI logs.
+- Do not upload the raw plan as a public artifact.
+- Remove the plan after the check, as shown above.
 
 ## Coverage
 
-Prodgate supports Terraform and OpenTofu plans, with AWS resource coverage. GCP and Azure are not supported yet. Run `prodgate coverage` to list the resource types and rules it evaluates, and `prodgate explain <ruleId>` to see what one rule flags and what it cannot determine.
+Prodgate currently supports Terraform and OpenTofu plan JSON with AWS-focused coverage:
+
+- stateful resources and data-loss risk;
+- database public access;
+- S3 public-access protection;
+- security-group ingress;
+- IAM wildcards;
+- deletion protection;
+- agent-authored change signals.
+
+Run these commands to inspect the current knowledge base:
+
+```bash
+prodgate coverage
+prodgate coverage --json
+prodgate explain <rule-id>
+prodgate doctor plan.json
+```
+
+GCP, Azure, Pulumi, CDK and CloudFormation are not supported yet.
 
 ## Documentation
 
-- [Configuration](docs/configuration.md)
-- [Action inputs and outputs](docs/action.md)
-- [CLI usage](docs/cli.md)
-- [JSON output](docs/json-envelope.md)
-- [Coverage and rules](docs/coverage.md)
-- [Sensitive plan data](docs/sensitive-plans.md)
-- [Threat model](docs/threat-model.md)
-- [Reporting a wrong finding](docs/reporting.md)
+- [JSON envelope and integration fields](docs/json-envelope.md)
+- [Reporting and sanitized diagnostics](docs/reporting.md)
+- [Release process](docs/releasing.md)
 - [Contributing](CONTRIBUTING.md)
 
-See `examples/agent-deletes-prod` for a worked plan where an AI agent deletes a production database and Prodgate blocks it.
+## Contributing
+
+Resource coverage is data-driven. Adding a resource type or rule should not require an engine rewrite. See [CONTRIBUTING.md](CONTRIBUTING.md) for development and test instructions.
+
+## License
+
+MIT
