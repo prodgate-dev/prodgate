@@ -1289,7 +1289,7 @@ function formatGithub(result) {
     }
     if (result.overrideApplied && result.override) {
         const o = result.override;
-        const bits = [overrideHeadline(o)];
+        const bits = [overrideHeadline(o).replace(/\.$/, '')];
         if (o.mechanism === 'github_label' && o.label)
             bits.push(`label \`${o.label}\``);
         if (o.workflowActor)

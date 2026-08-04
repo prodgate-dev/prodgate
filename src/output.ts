@@ -235,7 +235,7 @@ export function formatGithub(result: PlanResult): string {
 
   if (result.overrideApplied && result.override) {
     const o = result.override
-    const bits: string[] = [overrideHeadline(o)]
+    const bits: string[] = [overrideHeadline(o).replace(/\.$/, '')]
     if (o.mechanism === 'github_label' && o.label) bits.push(`label \`${o.label}\``)
     if (o.workflowActor) bits.push(`triggered by \`@${o.workflowActor}\``)
     if (o.headSha) bits.push(`PR head \`${o.headSha}\``)

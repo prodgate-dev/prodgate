@@ -47,7 +47,7 @@ on:
 
 permissions:
   contents: read
-  issues: write   # to post and update the PR comment and read the override label
+  pull-requests: write   # to post and update the PR comment and clear the override label
 
 jobs:
   prodgate:
