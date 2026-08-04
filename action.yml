@@ -7,7 +7,8 @@ branding:
 inputs:
   plan-json:
     description: 'Path to a `terraform show -json` plan file'
-    required: true
+    required: false
+    default: 'plan.json'
   mode:
     description: 'Enforcement mode: audit or enforce'
     required: false
