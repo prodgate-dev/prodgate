@@ -121,8 +121,25 @@ runs:
           --fail-on "$FAIL_ON" \
           --commits-file "$RUNNER_TEMP/prodgate-commits.txt" \
           --github --output "$RUNNER_TEMP/prodgate.md" \
-          --outputs-file "$GITHUB_OUTPUT"
+          --outputs-file "$GITHUB_OUTPUT" \
+          2> "$RUNNER_TEMP/prodgate-error.txt"
         code=$?
+        cat "$RUNNER_TEMP/prodgate-error.txt" >&2 || true
+        # On an input or configuration error the CLI exits before writing a report, so
+        # the previous comment would otherwise sit there describing a plan that was
+        # never evaluated. Replace it with the error instead of leaving it stale.
+        if [ "$code" = "2" ]; then
+          {
+            echo "## Prodgate Infrastructure Change Check: ERROR"
+            echo
+            echo "Prodgate could not evaluate this plan, so no policy decision was made."
+            echo "This is not a statement that the change is safe."
+            echo
+            echo '```'
+            head -c 2000 "$RUNNER_TEMP/prodgate-error.txt" 2>/dev/null || echo "See the workflow log for details."
+            echo '```'
+          } > "$RUNNER_TEMP/prodgate.md"
+        fi
         # Always publish the exit code, even on an input error (exit 2) where the CLI
         # exits before writing its outputs, so consumers can tell a policy block (1)
         # from a tool or input failure (2).
