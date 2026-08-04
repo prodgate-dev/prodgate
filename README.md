@@ -167,7 +167,13 @@ GCP, Azure, Pulumi, CDK and CloudFormation are not supported yet.
 
 ## Documentation
 
+- [Configuration](docs/configuration.md)
+- [Action inputs and outputs](docs/action.md)
+- [CLI usage](docs/cli.md)
+- [Coverage and rules](docs/coverage.md)
 - [JSON envelope and integration fields](docs/json-envelope.md)
+- [Sensitive plan data](docs/sensitive-plans.md)
+- [Threat model](docs/threat-model.md)
 - [Reporting and sanitized diagnostics](docs/reporting.md)
 - [Release process](docs/releasing.md)
 - [Contributing](CONTRIBUTING.md)
