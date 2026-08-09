@@ -174,7 +174,10 @@ GCP, Azure, Pulumi, CDK and CloudFormation are not supported yet.
 - [JSON envelope and integration fields](docs/json-envelope.md)
 - [Sensitive plan data](docs/sensitive-plans.md)
 - [Threat model](docs/threat-model.md)
+- [Roadmap](docs/roadmap.md)
 - [Reporting and sanitized diagnostics](docs/reporting.md)
+- [Security policy](SECURITY.md)
+- [Changelog](CHANGELOG.md)
 - [Release process](docs/releasing.md)
 - [Contributing](CONTRIBUTING.md)
 
