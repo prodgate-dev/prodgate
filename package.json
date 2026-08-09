@@ -40,6 +40,8 @@
     "devsecops",
     "ci",
     "terraform-plan",
+    "github-actions",
+    "aws",
     "security"
   ],
   "engines": {
